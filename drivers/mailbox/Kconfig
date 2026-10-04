@@ -179,6 +179,7 @@ config POLARFIRE_SOC_MAILBOX
 
 config QCOM_APCS_IPC
 	tristate "Qualcomm APCS IPC driver"
+	select REGMAP_MMIO
 	depends on ARCH_QCOM || COMPILE_TEST
 	help
 	  Say y here to enable support for the APCS IPC mailbox driver,

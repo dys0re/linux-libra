@@ -135,6 +135,12 @@ properties:
       builds.
     type: boolean
 
+  snps,dis-clk-gating-quirk:
+    description:
+      Keep internal clocks running to avoid controller RAM clock stalls when
+      entering low power modes, as required by the MSM8992 integration.
+    type: boolean
+
   snps,has-lpm-erratum:
     description: True when DWC3 was configured with LPM Erratum enabled
     type: boolean

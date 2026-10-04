@@ -4,6 +4,7 @@
  * Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
  */
 
+#include <linux/atomic.h>
 #include <linux/interrupt.h>
 #include <linux/io.h>
 #include <linux/mailbox_client.h>
@@ -65,6 +66,7 @@ struct smd_channel_info;
 struct smd_channel_info_pair;
 struct smd_channel_info_word;
 struct smd_channel_info_word_pair;
+struct qcom_smd_channel;
 
 static const struct rpmsg_endpoint_ops qcom_smd_endpoint_ops;
 
@@ -100,6 +102,7 @@ static const struct {
  * @edge_id:		identifier of this edge
  * @remote_pid:		identifier of remote processor
  * @irq:		interrupt for signals on this edge
+ * @irq_count:		number of received edge interrupts
  * @ipc_regmap:		regmap handle holding the outgoing ipc register
  * @ipc_offset:		offset within @ipc_regmap of the register for ipc
  * @ipc_bit:		bit in the register at @ipc_offset of @ipc_regmap
@@ -123,6 +126,7 @@ struct qcom_smd_edge {
 	unsigned remote_pid;
 
 	int irq;
+	atomic_t irq_count;
 
 	struct regmap *ipc_regmap;
 	int ipc_offset;
@@ -161,6 +165,7 @@ struct qcom_smd_device {
 	struct rpmsg_device rpdev;
 
 	struct qcom_smd_edge *edge;
+	struct qcom_smd_channel *channel;
 };
 
 struct qcom_smd_endpoint {
@@ -193,6 +198,8 @@ struct qcom_smd_endpoint {
  * @cb:			callback function registered for this channel
  * @recv_lock:		guard for rx info modifications and cb pointer
  * @pkt_size:		size of the currently handled packet
+ * @tx_packets:		number of packets submitted under tx_lock
+ * @rx_packets:		number of packets consumed under recv_lock
  * @drvdata:		driver private data
  * @list:		lite entry for @channels in qcom_smd_edge
  */
@@ -222,6 +229,8 @@ struct qcom_smd_channel {
 	spinlock_t recv_lock;
 
 	int pkt_size;
+	unsigned int tx_packets;
+	unsigned int rx_packets;
 
 	void *drvdata;
 
@@ -370,6 +379,7 @@ struct qcom_smd_alloc_entry {
 static void qcom_smd_signal_channel(struct qcom_smd_channel *channel)
 {
 	struct qcom_smd_edge *edge = channel->edge;
+	int ret;
 
 	if (edge->mbox_chan) {
 		/*
@@ -377,10 +387,15 @@ static void qcom_smd_signal_channel(struct qcom_smd_channel *channel)
 		 * possible cause is that the FIFO in the framework is full of
 		 * other writes to the same bit.
 		 */
-		mbox_send_message(edge->mbox_chan, NULL);
+		ret = mbox_send_message(edge->mbox_chan, NULL);
+		if (ret < 0)
+			dev_err_ratelimited(&edge->dev,
+					    "SMD doorbell submission failed: %d\n", ret);
 		mbox_client_txdone(edge->mbox_chan, 0);
 	} else {
-		regmap_write(edge->ipc_regmap, edge->ipc_offset, BIT(edge->ipc_bit));
+		ret = regmap_write(edge->ipc_regmap, edge->ipc_offset, BIT(edge->ipc_bit));
+		if (ret)
+			dev_err_ratelimited(&edge->dev, "SMD doorbell write failed: %d\n", ret);
 	}
 }
 
@@ -566,6 +581,7 @@ static int qcom_smd_channel_recv_single(struct qcom_smd_channel *channel)
 	qcom_smd_channel_advance(channel, len);
 
 	channel->pkt_size = 0;
+	channel->rx_packets++;
 
 	return 0;
 }
@@ -646,6 +662,8 @@ static irqreturn_t qcom_smd_edge_intr(int irq, void *data)
 	unsigned available;
 	bool kick_scanner = false;
 	bool kick_state = false;
+
+	atomic_inc(&edge->irq_count);
 
 	/*
 	 * Handle state changes or data on each of the channels on this edge
@@ -797,6 +815,7 @@ static int __qcom_smd_send(struct qcom_smd_channel *channel, const void *data,
 	qcom_smd_write_fifo(channel, data, len);
 
 	SET_TX_CHANNEL_FLAG(channel, fHEAD, 1);
+	channel->tx_packets++;
 
 	/* Ensure ordering of channel info updates */
 	wmb();
@@ -1066,6 +1085,40 @@ static void qcom_smd_release_device(struct device *dev)
 	kfree(qsdev);
 }
 
+/* Read-only snapshot: never advance a FIFO or synthesize an interrupt. */
+static ssize_t smd_state_show(struct device *dev,
+			    struct device_attribute *attr, char *buf)
+{
+	struct qcom_smd_device *qsdev = to_smd_device(to_rpmsg_device(dev));
+	struct qcom_smd_channel *channel = qsdev->channel;
+	struct qcom_smd_edge *edge = qsdev->edge;
+	unsigned long flags;
+	ssize_t ret;
+
+	spin_lock_irqsave(&channel->recv_lock, flags);
+	ret = sysfs_emit(buf,
+		"channel=%s edge=%u pid=%u irq=%d events=%d\n"
+		"state=%u/%u tx=%u/%u rx=%u/%u fifo=%d word=%u\n"
+		"packets: tx=%u rx=%u pending=%d\n",
+		channel->name, edge->edge_id, edge->remote_pid, edge->irq,
+		atomic_read(&edge->irq_count), READ_ONCE(channel->state),
+		GET_RX_CHANNEL_INFO(channel, state),
+		GET_TX_CHANNEL_INFO(channel, head), GET_TX_CHANNEL_INFO(channel, tail),
+		GET_RX_CHANNEL_INFO(channel, head), GET_RX_CHANNEL_INFO(channel, tail),
+		channel->fifo_size, !!channel->info_word,
+		READ_ONCE(channel->tx_packets), channel->rx_packets, channel->pkt_size);
+	spin_unlock_irqrestore(&channel->recv_lock, flags);
+
+	return ret;
+}
+static DEVICE_ATTR_RO(smd_state);
+
+static struct attribute *qcom_smd_device_attrs[] = {
+	&dev_attr_smd_state.attr,
+	NULL,
+};
+ATTRIBUTE_GROUPS(qcom_smd_device);
+
 /*
  * Create a smd client device for channel that is being opened.
  */
@@ -1083,6 +1136,7 @@ static int qcom_smd_create_device(struct qcom_smd_channel *channel)
 
 	/* Link qsdev to our SMD edge */
 	qsdev->edge = edge;
+	qsdev->channel = channel;
 
 	/* Assign callbacks for rpmsg_device */
 	qsdev->rpdev.ops = &qcom_smd_device_ops;
@@ -1096,6 +1150,7 @@ static int qcom_smd_create_device(struct qcom_smd_channel *channel)
 	rpdev->dev.of_node = qcom_smd_match_channel(edge->of_node, channel->name);
 	rpdev->dev.parent = &edge->dev;
 	rpdev->dev.release = qcom_smd_release_device;
+	rpdev->dev.groups = qcom_smd_device_groups;
 
 	return rpmsg_register_device(rpdev);
 }
@@ -1347,6 +1402,7 @@ static int qcom_smd_parse_edge(struct device *dev,
 
 	INIT_LIST_HEAD(&edge->channels);
 	spin_lock_init(&edge->channels_lock);
+	atomic_set(&edge->irq_count, 0);
 
 	INIT_WORK(&edge->scan_work, qcom_channel_scan_worker);
 	INIT_WORK(&edge->state_work, qcom_channel_state_worker);

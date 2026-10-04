@@ -182,17 +182,25 @@ struct rpm_smd_clk_desc {
 	const struct clk_smd_rpm ** const icc_clks;
 	size_t num_icc_clks;
 	bool scaling_before_handover;
+	/* Non-branch handover vote in wire units; zero retains INT_MAX. */
+	u32 handoff_value;
+	bool scaling_active_first;
+	bool allow_skip_scaling;
 };
+
+static bool skip_scaling;
+module_param(skip_scaling, bool, 0400);
+MODULE_PARM_DESC(skip_scaling, "Skip MSM8992 RPM scaling enable during bring-up");
 
 static DEFINE_MUTEX(rpm_smd_clk_lock);
 
-static int clk_smd_rpm_handoff(const struct clk_smd_rpm *r)
+static int clk_smd_rpm_handoff(const struct clk_smd_rpm *r, u32 handoff_value)
 {
 	int ret;
 	struct clk_smd_rpm_req req = {
 		.key = cpu_to_le32(r->rpm_key),
 		.nbytes = cpu_to_le32(sizeof(u32)),
-		.value = cpu_to_le32(r->branch ? 1 : INT_MAX),
+		.value = cpu_to_le32(r->branch ? 1 : handoff_value),
 	};
 
 	ret = qcom_rpm_smd_write(rpmcc_smd_rpm, QCOM_SMD_RPM_ACTIVE_STATE,
@@ -399,30 +407,44 @@ static unsigned long clk_smd_rpm_recalc_rate(struct clk_hw *hw,
 	return r->rate;
 }
 
-static int clk_smd_rpm_enable_scaling(void)
+static int clk_smd_rpm_enable_scaling(const struct rpm_smd_clk_desc *desc)
 {
 	int ret;
+	bool active_first = desc->scaling_active_first;
+	int first = active_first ? QCOM_SMD_RPM_ACTIVE_STATE : QCOM_SMD_RPM_SLEEP_STATE;
+	int second = active_first ? QCOM_SMD_RPM_SLEEP_STATE : QCOM_SMD_RPM_ACTIVE_STATE;
 	struct clk_smd_rpm_req req = {
 		.key = cpu_to_le32(QCOM_RPM_SMD_KEY_ENABLE),
 		.nbytes = cpu_to_le32(sizeof(u32)),
 		.value = cpu_to_le32(1),
 	};
 
-	ret = qcom_rpm_smd_write(rpmcc_smd_rpm, QCOM_SMD_RPM_SLEEP_STATE,
-				 QCOM_SMD_RPM_MISC_CLK,
-				 QCOM_RPM_SCALING_ENABLE_ID, &req, sizeof(req));
-	if (ret) {
-		pr_err("RPM clock scaling (sleep set) not enabled!\n");
-		return ret;
+	if (desc->allow_skip_scaling && skip_scaling) {
+		pr_warn("RPM clock scaling skipped for MSM8992 (bring-up workaround)\n");
+		return 0;
 	}
 
-	ret = qcom_rpm_smd_write(rpmcc_smd_rpm, QCOM_SMD_RPM_ACTIVE_STATE,
+	ret = qcom_rpm_smd_write(rpmcc_smd_rpm, first,
 				 QCOM_SMD_RPM_MISC_CLK,
 				 QCOM_RPM_SCALING_ENABLE_ID, &req, sizeof(req));
 	if (ret) {
-		pr_err("RPM clock scaling (active set) not enabled!\n");
+		pr_err("RPM clock scaling (%s set) not enabled!\n",
+		       active_first ? "active" : "sleep");
 		return ret;
 	}
+	if (active_first)
+		pr_info("RPM clock scaling: active set acknowledged\n");
+
+	ret = qcom_rpm_smd_write(rpmcc_smd_rpm, second,
+				 QCOM_SMD_RPM_MISC_CLK,
+				 QCOM_RPM_SCALING_ENABLE_ID, &req, sizeof(req));
+	if (ret) {
+		pr_err("RPM clock scaling (%s set) not enabled!\n",
+		       active_first ? "sleep" : "active");
+		return ret;
+	}
+	if (active_first)
+		pr_info("RPM clock scaling: sleep set acknowledged\n");
 
 	pr_debug("%s: RPM clock scaling is enabled\n", __func__);
 	return 0;
@@ -821,6 +843,12 @@ static const struct rpm_smd_clk_desc rpm_clk_msm8992 = {
 	.num_clks = ARRAY_SIZE(msm8992_clks),
 	.icc_clks = bimc_pcnoc_snoc_cnoc_ocmem_icc_clks,
 	.num_icc_clks = ARRAY_SIZE(bimc_pcnoc_snoc_cnoc_ocmem_icc_clks),
+	/* Vendor handoff sets INT_MAX Hz, then converts the vote to kHz. */
+	.handoff_value = DIV_ROUND_UP((unsigned long)INT_MAX, 1000),
+	/* Vendor sleep-set votes are cached until entry into sleep. */
+	.scaling_active_first = true,
+	/* Libra workaround from dys0re/libra-linux-6.1, commit 525ba5ca7dff. */
+	.allow_skip_scaling = true,
 };
 
 static struct clk_smd_rpm *msm8994_clks[] = {
@@ -1257,6 +1285,7 @@ static void rpm_smd_unregister_icc(void *data)
 static int rpm_smd_clk_probe(struct platform_device *pdev)
 {
 	int ret;
+	u32 handoff_value;
 	size_t num_clks, i;
 	struct clk_smd_rpm **rpm_smd_clks;
 	const struct rpm_smd_clk_desc *desc;
@@ -1274,9 +1303,10 @@ static int rpm_smd_clk_probe(struct platform_device *pdev)
 
 	rpm_smd_clks = desc->clks;
 	num_clks = desc->num_clks;
+	handoff_value = desc->handoff_value ?: INT_MAX;
 
 	if (desc->scaling_before_handover) {
-		ret = clk_smd_rpm_enable_scaling();
+		ret = clk_smd_rpm_enable_scaling(desc);
 		if (ret)
 			goto err;
 	}
@@ -1285,7 +1315,7 @@ static int rpm_smd_clk_probe(struct platform_device *pdev)
 		if (!rpm_smd_clks[i])
 			continue;
 
-		ret = clk_smd_rpm_handoff(rpm_smd_clks[i]);
+		ret = clk_smd_rpm_handoff(rpm_smd_clks[i], handoff_value);
 		if (ret)
 			goto err;
 	}
@@ -1294,13 +1324,13 @@ static int rpm_smd_clk_probe(struct platform_device *pdev)
 		if (!desc->icc_clks[i])
 			continue;
 
-		ret = clk_smd_rpm_handoff(desc->icc_clks[i]);
+		ret = clk_smd_rpm_handoff(desc->icc_clks[i], handoff_value);
 		if (ret)
 			goto err;
 	}
 
 	if (!desc->scaling_before_handover) {
-		ret = clk_smd_rpm_enable_scaling();
+		ret = clk_smd_rpm_enable_scaling(desc);
 		if (ret)
 			goto err;
 	}

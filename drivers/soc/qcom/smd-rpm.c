@@ -128,14 +128,21 @@ int qcom_rpm_smd_write(struct qcom_smd_rpm *rpm,
 	memcpy(pkt->payload, buf, count);
 
 	ret = rpmsg_send(rpm->rpm_channel, pkt, size);
-	if (ret)
+	if (ret) {
+		dev_err(rpm->dev, "RPM send failed: msg=%u state=%d type=%#x id=%u: %d\n",
+			le32_to_cpu(pkt->req.msg_id), state, type, id, ret);
 		goto out;
+	}
 
 	left = wait_for_completion_timeout(&rpm->ack, RPM_REQUEST_TIMEOUT);
-	if (!left)
+	if (!left) {
+		dev_err(rpm->dev, "RPM ACK timeout: msg=%u state=%d type=%#x id=%u payload=%*ph\n",
+			le32_to_cpu(pkt->req.msg_id), state, type, id,
+			(int)min_t(size_t, count, 16), pkt->payload);
 		ret = -ETIMEDOUT;
-	else
+	} else {
 		ret = rpm->ack_status;
+	}
 
 out:
 	kfree(pkt);

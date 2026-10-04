@@ -1,0 +1,19 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/* Recovery/test variant: USB and SMP without resetting the LCD. */
+#include "msm8992-xiaomi-libra.dts"
+
+&framebuffer0 { status = "okay"; };
+&mdss { status = "disabled"; };
+&mdss_dsi0 { status = "disabled"; };
+&mdss_dsi0_phy { status = "disabled"; };
+&pmi8994_labibb { status = "disabled"; };
+&pmi8994_wled { status = "disabled"; };
+
+&mmcc {
+	/* Do not depend on or initialize the disabled native DSI PLL provider. */
+	clocks = <&xo_board>,
+		 <&gcc GPLL0_OUT_MMSSCC>,
+		 <&rpmcc RPM_SMD_MMSSNOC_AHB_CLK>,
+		 <&rpmcc RPM_SMD_GFX3D_CLK_SRC>,
+		 <0>, <0>, <0>, <0>, <0>;
+};

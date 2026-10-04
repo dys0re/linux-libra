@@ -214,6 +214,7 @@ properties:
       - enum:
           - psci
           - spin-table
+          - qcom,8994-arm-cortex-acc
       # On ARM 32-bit systems this property is optional
       - enum:
           - actions,s500-smp
@@ -337,9 +338,18 @@ properties:
 
       Required for systems that have an "enable-method" property
       value of "qcom,kpss-acc-v1", "qcom,kpss-acc-v2", "qcom,msm8226-smp" or
-      "qcom,msm8916-smp".
+      "qcom,msm8916-smp" or "qcom,8994-arm-cortex-acc".
 
       * arm/msm/qcom,kpss-acc.txt
+
+  qcom,l2-power:
+    $ref: /schemas/types.yaml#/definitions/phandle
+    description: Shared MSM8992 L2 power, SAW and Q2S control registers.
+
+  qcom,ldo-retention-voltage:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    maximum: 127
+    description: Retention voltage selector for the MSM8992 per-core LDO.
 
   rockchip,pmu:
     $ref: /schemas/types.yaml#/definitions/phandle

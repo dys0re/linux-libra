@@ -51,6 +51,28 @@
 			compatible = "qcom,pmi8994-regulators";
 		};
 
+		pmi8994_labibb: labibb {
+			compatible = "qcom,pmi8994-lab-ibb";
+			status = "disabled";
+
+			pmi8994_lab: lab {
+				interrupts = <0x3 0xde 0x1 IRQ_TYPE_EDGE_RISING>;
+				interrupt-names = "sc-err";
+				regulator-name = "lab";
+				regulator-min-microvolt = <5500000>;
+				regulator-max-microvolt = <5500000>;
+				qcom,soft-start-us = <800>;
+			};
+
+			pmi8994_ibb: ibb {
+				interrupts = <0x3 0xdc 0x2 IRQ_TYPE_EDGE_RISING>;
+				interrupt-names = "sc-err";
+				regulator-name = "ibb";
+				regulator-min-microvolt = <5500000>;
+				regulator-max-microvolt = <5500000>;
+			};
+		};
+
 		pmi8994_wled: wled@d800 {
 			compatible = "qcom,pmi8994-wled";
 			reg = <0xd800>, <0xd900>;

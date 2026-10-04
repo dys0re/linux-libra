@@ -1123,6 +1123,7 @@ struct dwc3_scratchpad_array {
  * @rx_detect_poll_quirk: set if we enable rx_detect to polling lfps quirk
  * @dis_u3_susphy_quirk: set if we disable usb3 suspend phy
  * @dis_u2_susphy_quirk: set if we disable usb2 suspend phy
+ * @dis_clk_gating_quirk: keep internal clocks running to avoid RAM clock stalls
  * @dis_enblslpm_quirk: set if we clear enblslpm in GUSB2PHYCFG,
  *                      disabling the suspend signal to the PHY.
  * @dis_u1_entry_quirk: set if link entering into U1 state needs to be disabled.
@@ -1375,6 +1376,7 @@ struct dwc3 {
 	unsigned		rx_detect_poll_quirk:1;
 	unsigned		dis_u3_susphy_quirk:1;
 	unsigned		dis_u2_susphy_quirk:1;
+	unsigned		dis_clk_gating_quirk:1;
 	unsigned		dis_enblslpm_quirk:1;
 	unsigned		dis_u1_entry_quirk:1;
 	unsigned		dis_u2_entry_quirk:1;

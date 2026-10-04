@@ -6,6 +6,13 @@ config DRM_PANEL
 	  Panel registration and lookup framework.
 
 menu "Display Panels"
+
+config DRM_PANEL_SHARP_LIBRA_RSP61322
+	tristate "Xiaomi Mi 4C Sharp RSP61322 video-mode panel"
+	depends on OF && DRM_MIPI_DSI && BACKLIGHT_CLASS_DEVICE
+	help
+	  Support the Sharp RSP61322 video-mode panel variant in Xiaomi Mi 4C.
+	  Other Mi 4C panel variants need their own initialization sequences.
 	depends on DRM && DRM_PANEL
 
 config DRM_PANEL_ABT_Y030XX067A

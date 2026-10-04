@@ -1,0 +1,15 @@
+What:		/sys/bus/rpmsg/devices/.../smd_state
+Date:		October 2026
+Contact:	Linux remoteproc mailing list <linux-remoteproc@vger.kernel.org>
+Description:
+		Read-only diagnostic snapshot for Qualcomm SMD channel devices.
+		Reports channel name, edge/remote processor ID, Linux IRQ number
+		and cumulative received edge interrupts; local/remote channel
+		states; TX and RX FIFO head/tail byte offsets; FIFO size; whether
+		channel information is word-aligned; packets submitted/consumed;
+		and pending RX packet size. State 2 denotes an opened channel.
+		Packet and interrupt counts are cumulative for the channel/edge
+		lifetime and can wrap. Remote-written pointers and TX statistics
+		may change during a read; this is not an atomic remote snapshot.
+		Reading does not consume packets, signal the remote or poll the
+		transport's receive callback.

@@ -6,6 +6,277 @@
 #include "dsi_phy.h"
 #include "dsi.xml.h"
 #include "dsi_phy_20nm.xml.h"
+#include <linux/iopoll.h>
+#include <linux/math64.h>
+
+/* MSM8992 PLL sequence from the downstream 20nm DSI PLL driver.
+ * Copyright (c) 2014-2015, The Linux Foundation.
+ * Copyright (C) 2016 XiaoMi, Inc.
+ */
+#define PLL_SYS_CLK_CTRL		0x000
+#define PLL_VCOTAIL_EN		0x004
+#define PLL_CMN_MODE		0x008
+#define PLL_BIAS_EN		0x030
+#define PLL_RESETSM_CTRL		0x04c
+#define PLL_RESETSM_CTRL2		0x050
+#define PLL_RESETSM_CTRL3		0x054
+#define PLL_KVCO_CODE		0x074
+#define PLL_LOCK_CMP1		0x090
+#define PLL_LOCK_CMP2		0x094
+#define PLL_LOCK_CMP3		0x098
+#define PLL_LOCK_CMP_EN		0x09c
+#define PLL_VCO_TUNE		0x0a8
+#define PLL_DEC_START1		0x0ac
+#define PLL_FRAC_START1		0x100
+#define PLL_FRAC_START2		0x104
+#define PLL_FRAC_START3		0x108
+#define PLL_DEC_START2		0x10c
+#define PLL_POST_DIV		0x140
+#define PLL_BYTE_DIV		0x144
+#define PLL_PIXEL_DIV		0x148
+#define PLL_RESET_SM		0x150
+
+struct dsi_pll_20nm {
+	struct clk_hw hw;
+	struct msm_dsi_phy *phy;
+	void __iomem *aux_base;
+	unsigned long rate;
+	u32 saved_post_div;
+	u32 saved_byte_div;
+	u32 saved_pixel_div;
+};
+
+#define to_pll_20nm(ptr) container_of(ptr, struct dsi_pll_20nm, hw)
+
+static void pll_20nm_powerdown(void __iomem *base)
+{
+	writel(0, base + PLL_SYS_CLK_CTRL);
+	writel(1, base + PLL_CMN_MODE);
+	writel(0x82, base + PLL_VCOTAIL_EN);
+	writel(2, base + PLL_BIAS_EN);
+	writel(6, base + PLL_RESETSM_CTRL3);
+}
+
+static void pll_20nm_bias_enable(void __iomem *base)
+{
+	writel(0x82, base + PLL_VCOTAIL_EN);
+	writel(0x2a, base + PLL_BIAS_EN);
+	writel(0x2b, base + PLL_BIAS_EN);
+	writel(2, base + PLL_RESETSM_CTRL3);
+}
+
+static int pll_20nm_set_rate(struct clk_hw *hw, unsigned long rate,
+			   unsigned long parent_rate)
+{
+	struct dsi_pll_20nm *pll = to_pll_20nm(hw);
+
+	if (rate < pll->phy->cfg->min_pll_rate ||
+	    rate > pll->phy->cfg->max_pll_rate || parent_rate != 19200000)
+		return -EINVAL;
+
+	pll->rate = rate;
+	return 0;
+}
+
+static long pll_20nm_round_rate(struct clk_hw *hw, unsigned long rate,
+			      unsigned long *parent_rate)
+{
+	struct msm_dsi_phy *phy = to_pll_20nm(hw)->phy;
+
+	return clamp(rate, phy->cfg->min_pll_rate, phy->cfg->max_pll_rate);
+}
+
+static unsigned long pll_20nm_recalc_rate(struct clk_hw *hw,
+					unsigned long parent_rate)
+{
+	/* set_rate caches the requested rate; register state is lost at GDSC off. */
+	return to_pll_20nm(hw)->rate;
+}
+
+static int pll_20nm_prepare(struct clk_hw *hw)
+{
+	struct dsi_pll_20nm *pll = to_pll_20nm(hw);
+	struct msm_dsi_phy *phy = pll->phy;
+	void __iomem *base = phy->pll_base;
+	u64 multiple, comparator;
+	u32 dec, frac, status;
+	int ret;
+	static const struct { u16 reg; u8 val; } config[] = {
+		{ 0x000, 0x40 }, { 0x00c, 0x0f }, { 0x010, 0x0f },
+		{ 0x01c, 0x08 }, { 0x02c, 0x08 }, { 0x048, 0x4a },
+		{ 0x060, 0x00 }, { 0x064, 0x01 }, { 0x014, 0x07 },
+		{ 0x070, 0x1f }, { 0x068, 0x8a }, { 0x080, 0x10 },
+		{ 0x0b4, 0x00 }, { 0x0fc, 0x0c }, { 0x110, 0x0a },
+		{ 0x13c, 0x0f }, { 0x008, 0x00 },
+		{ 0x024, 0x03 }, { 0x034, 0x3f }, { 0x038, 0x03 },
+		{ 0x03c, 0x1f }, { 0x114, 0x77 },
+	};
+	unsigned int i;
+
+	if (phy->pll_on)
+		return 0;
+	if (!pll->rate)
+		return -EINVAL;
+	writel(readl(base + PLL_POST_DIV) | BIT(7), base + PLL_POST_DIV);
+	writel(3, base + PLL_BYTE_DIV);
+
+	/* The unused PLL1 bias block participates in PLL0 calibration. */
+	pll_20nm_bias_enable(pll->aux_base);
+	pll_20nm_bias_enable(base);
+	for (i = 0; i < ARRAY_SIZE(config); i++)
+		writel(config[i].val, base + config[i].reg);
+
+	/* 90-degree phase mode, 19.2 MHz reference, 20-bit fractional divider. */
+	multiple = div_u64((u64)pll->rate << 20, 2 * 19200000);
+	dec = multiple >> 20;
+	frac = multiple & GENMASK(19, 0);
+	comparator = div_u64(multiple * 2 * 127, 10 * BIT(20));
+	writel((frac & 0x7f) | BIT(7), base + PLL_FRAC_START1);
+	writel(((frac >> 7) & 0x7f) | BIT(7), base + PLL_FRAC_START2);
+	writel(((frac >> 14) & 0x3f) | BIT(6), base + PLL_FRAC_START3);
+	writel((dec & 0x7f) | BIT(7), base + PLL_DEC_START1);
+	writel(((dec >> 7) & 1) | BIT(1), base + PLL_DEC_START2);
+	writel(comparator & 0xff, base + PLL_LOCK_CMP1);
+	writel((comparator >> 8) & 0xff, base + PLL_LOCK_CMP2);
+	writel((comparator >> 16) & 0xff, base + PLL_LOCK_CMP3);
+	writel(0x0d, base + PLL_LOCK_CMP_EN);
+
+	/* Always calibrate on a cold start; dynamic refresh is not supported. */
+	writel(0, base + PLL_KVCO_CODE);
+	writel(0, base + PLL_VCO_TUNE);
+	writel(0x24, base + PLL_RESETSM_CTRL);
+	writel(0x07, base + PLL_RESETSM_CTRL2);
+	writel(0x03, base + PLL_VCOTAIL_EN);
+	writel(0x02, base + PLL_RESETSM_CTRL3);
+	udelay(10);
+	writel(0x03, base + PLL_RESETSM_CTRL3);
+	writel(0, phy->base + REG_DSI_20nm_PHY_CTRL_1);
+	writel(0x7f, phy->base + REG_DSI_20nm_PHY_CTRL_0);
+
+	ret = readl_poll_timeout(base + PLL_RESET_SM, status,
+				status & BIT(5), 15, 1000);
+	if (!ret)
+		ret = readl_poll_timeout(base + PLL_RESET_SM, status,
+					status & BIT(6), 15, 1000);
+	pll_20nm_powerdown(pll->aux_base);
+	if (ret) {
+		pll_20nm_powerdown(base);
+		return dev_err_probe(&phy->pdev->dev, ret, "DSI PLL failed to lock\n");
+	}
+	phy->pll_on = true;
+	return 0;
+}
+
+static void pll_20nm_unprepare(struct clk_hw *hw)
+{
+	struct dsi_pll_20nm *pll = to_pll_20nm(hw);
+
+	pll_20nm_powerdown(pll->aux_base);
+	pll_20nm_powerdown(pll->phy->pll_base);
+	pll->phy->pll_on = false;
+}
+
+static const struct clk_ops pll_20nm_ops = {
+	.prepare = pll_20nm_prepare,
+	.unprepare = pll_20nm_unprepare,
+	.set_rate = pll_20nm_set_rate,
+	.round_rate = pll_20nm_round_rate,
+	.recalc_rate = pll_20nm_recalc_rate,
+};
+
+static int dsi_pll_20nm_8992_init(struct msm_dsi_phy *phy)
+{
+	struct device *dev = &phy->pdev->dev;
+	struct dsi_pll_20nm *pll;
+	struct clk_hw *ndiv, *indirect, *mux, *pixel_div, *hw;
+	char name[40];
+	struct clk_init_data init = {
+		.name = name,
+		.ops = &pll_20nm_ops,
+		.parent_data = &(const struct clk_parent_data) { .fw_name = "ref" },
+		.num_parents = 1,
+		.flags = CLK_IGNORE_UNUSED,
+	};
+	int ret;
+
+	pll = devm_kzalloc(dev, sizeof(*pll), GFP_KERNEL);
+	if (!pll)
+		return -ENOMEM;
+	pll->phy = phy;
+	pll->aux_base = devm_platform_ioremap_resource_byname(phy->pdev, "dsi_pll_aux");
+	if (IS_ERR(pll->aux_base))
+		return PTR_ERR(pll->aux_base);
+	snprintf(name, sizeof(name), "dsi%dvco_clk", phy->id);
+	pll->hw.init = &init;
+	ret = devm_clk_hw_register(dev, &pll->hw);
+	if (ret)
+		return ret;
+	phy->vco_hw = &pll->hw;
+	/* A reset value of zero is not a valid one-based N divider. */
+	writel(BIT(7) | 1, phy->pll_base + PLL_POST_DIV);
+
+	snprintf(name, sizeof(name), "dsi%dndiv", phy->id);
+	ndiv = devm_clk_hw_register_divider_parent_hw(dev, name, &pll->hw,
+		CLK_SET_RATE_PARENT, phy->pll_base + PLL_POST_DIV, 0, 4,
+		CLK_DIVIDER_ONE_BASED, NULL);
+	if (IS_ERR(ndiv))
+		return PTR_ERR(ndiv);
+	snprintf(name, sizeof(name), "dsi%dindirect", phy->id);
+	indirect = devm_clk_hw_register_fixed_factor_parent_hw(dev, name, ndiv,
+		CLK_SET_RATE_PARENT, 1, 2);
+	if (IS_ERR(indirect))
+		return PTR_ERR(indirect);
+
+	/* Bit 7 enables the divider/mux override, bit 5 selects indirect. */
+	writel(readl(phy->pll_base + PLL_POST_DIV) | BIT(7),
+	       phy->pll_base + PLL_POST_DIV);
+	snprintf(name, sizeof(name), "dsi%dbyte_mux", phy->id);
+	mux = devm_clk_hw_register_mux_parent_hws(dev, name,
+		((const struct clk_hw *[]){ &pll->hw, indirect }), 2,
+		CLK_SET_RATE_PARENT, phy->pll_base + PLL_POST_DIV, 5, 1, 0, NULL);
+	if (IS_ERR(mux))
+		return PTR_ERR(mux);
+	/* OCLK2 divider is fixed at four, followed by the byte divide-by-two. */
+	writel(3, phy->pll_base + PLL_BYTE_DIV);
+	snprintf(name, sizeof(name), "dsi%dpllbyte", phy->id);
+	hw = devm_clk_hw_register_fixed_factor_parent_hw(dev, name, mux,
+		CLK_SET_RATE_PARENT, 1, 8);
+	if (IS_ERR(hw))
+		return PTR_ERR(hw);
+	phy->provided_clocks->hws[DSI_BYTE_PLL_CLK] = hw;
+
+	snprintf(name, sizeof(name), "dsi%dpixel_div", phy->id);
+	pixel_div = devm_clk_hw_register_divider_parent_hw(dev, name, &pll->hw,
+		0, phy->pll_base + PLL_PIXEL_DIV, 0, 8, 0, NULL);
+	if (IS_ERR(pixel_div))
+		return PTR_ERR(pixel_div);
+	snprintf(name, sizeof(name), "dsi%dpll", phy->id);
+	hw = devm_clk_hw_register_fixed_factor_parent_hw(dev, name, pixel_div,
+		CLK_SET_RATE_PARENT, 1, 2);
+	if (IS_ERR(hw))
+		return PTR_ERR(hw);
+	phy->provided_clocks->hws[DSI_PIXEL_PLL_CLK] = hw;
+	return 0;
+}
+
+static void dsi_20nm_save_pll_state(struct msm_dsi_phy *phy)
+{
+	struct dsi_pll_20nm *pll = to_pll_20nm(phy->vco_hw);
+
+	pll->saved_post_div = readl(phy->pll_base + PLL_POST_DIV);
+	pll->saved_byte_div = readl(phy->pll_base + PLL_BYTE_DIV);
+	pll->saved_pixel_div = readl(phy->pll_base + PLL_PIXEL_DIV);
+}
+
+static int dsi_20nm_restore_pll_state(struct msm_dsi_phy *phy)
+{
+	struct dsi_pll_20nm *pll = to_pll_20nm(phy->vco_hw);
+
+	writel(pll->saved_post_div, phy->pll_base + PLL_POST_DIV);
+	writel(pll->saved_byte_div, phy->pll_base + PLL_BYTE_DIV);
+	writel(pll->saved_pixel_div, phy->pll_base + PLL_PIXEL_DIV);
+	return 0;
+}
 
 static void dsi_20nm_dphy_set_timing(struct msm_dsi_phy *phy,
 		struct msm_dsi_dphy_timing *timing)
@@ -145,3 +416,20 @@ const struct msm_dsi_phy_cfg dsi_phy_20nm_cfgs = {
 	.num_dsi_phy = 2,
 };
 
+/* MSM8992 uses PLL0 plus the auxiliary PLL1 bias block in 90-degree mode. */
+const struct msm_dsi_phy_cfg dsi_phy_20nm_8992_cfgs = {
+	.has_phy_regulator = true,
+	.regulator_data = dsi_phy_20nm_regulators,
+	.num_regulators = ARRAY_SIZE(dsi_phy_20nm_regulators),
+	.ops = {
+		.pll_init = dsi_pll_20nm_8992_init,
+		.enable = dsi_20nm_phy_enable,
+		.disable = dsi_20nm_phy_disable,
+		.save_pll_state = dsi_20nm_save_pll_state,
+		.restore_pll_state = dsi_20nm_restore_pll_state,
+	},
+	.min_pll_rate = 1000000000,
+	.max_pll_rate = 2000000000,
+	.io_start = { 0xfd994500 },
+	.num_dsi_phy = 1,
+};

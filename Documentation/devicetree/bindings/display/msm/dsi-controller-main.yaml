@@ -20,6 +20,7 @@ properties:
               - qcom,msm8953-dsi-ctrl
               - qcom,msm8974-dsi-ctrl
               - qcom,msm8976-dsi-ctrl
+              - qcom,msm8992-dsi-ctrl
               - qcom,msm8996-dsi-ctrl
               - qcom,msm8998-dsi-ctrl
               - qcom,qcm2290-dsi-ctrl
@@ -287,6 +288,7 @@ allOf:
             enum:
               - qcom,msm8226-dsi-ctrl
               - qcom,msm8974-dsi-ctrl
+              - qcom,msm8992-dsi-ctrl
     then:
       properties:
         clocks:

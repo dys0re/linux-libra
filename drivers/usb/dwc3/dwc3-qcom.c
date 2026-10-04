@@ -37,6 +37,9 @@
 #define PIPE3_PHYSTATUS_SW			BIT(3)
 #define PIPE_UTMI_CLK_DIS			BIT(8)
 
+#define QSCRATCH_CGCTL				0x28
+#define RAM_CLK_EN				GENMASK(4, 3)
+
 #define PWR_EVNT_LPM_IN_L2_MASK			BIT(4)
 #define PWR_EVNT_LPM_OUT_L2_MASK		BIT(5)
 
@@ -738,6 +741,7 @@ static int dwc3_qcom_probe(struct platform_device *pdev)
 	int			ret, i;
 	bool			ignore_pipe_clk;
 	bool			wakeup_source;
+	bool			msm8992;
 
 	qcom = devm_kzalloc(&pdev->dev, sizeof(*qcom), GFP_KERNEL);
 	if (!qcom)
@@ -745,6 +749,7 @@ static int dwc3_qcom_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, qcom);
 	qcom->dev = &pdev->dev;
+	msm8992 = of_device_is_compatible(np, "qcom,msm8992-dwc3");
 
 	qcom->resets = devm_reset_control_array_get_optional_exclusive(dev);
 	if (IS_ERR(qcom->resets)) {
@@ -758,13 +763,18 @@ static int dwc3_qcom_probe(struct platform_device *pdev)
 		return ret;
 	}
 
-	usleep_range(10, 1000);
+	if (msm8992)
+		msleep(20);
+	else
+		usleep_range(10, 1000);
 
 	ret = reset_control_deassert(qcom->resets);
 	if (ret) {
 		dev_err(&pdev->dev, "failed to deassert resets, err=%d\n", ret);
 		return ret;
 	}
+	if (msm8992)
+		ndelay(200);
 
 	ret = dwc3_qcom_clk_init(qcom, of_clk_get_parent_count(np));
 	if (ret) {
@@ -777,6 +787,10 @@ static int dwc3_qcom_probe(struct platform_device *pdev)
 		ret = PTR_ERR(qcom->qscratch_base);
 		goto clk_disable;
 	}
+
+	/* Vendor workaround: keep the controller RAM clocks running. */
+	if (msm8992)
+		dwc3_qcom_setbits(qcom->qscratch_base, QSCRATCH_CGCTL, RAM_CLK_EN);
 
 	ret = dwc3_qcom_setup_irq(pdev);
 	if (ret) {

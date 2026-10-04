@@ -1,0 +1,69 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/phy/qcom,msm8992-usb-hs-phy.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: Qualcomm MSM8992 USB2 high-speed PHY
+
+maintainers:
+  - Konrad Dybcio <konradybcio@kernel.org>
+
+description: |
+  USB2 PHY controlled through its CSR bank and the DWC3 QSCRATCH bank.
+  QSCRATCH is shared with the Qualcomm DWC3 glue controller. The CX and
+  MX domains replace the downstream corner regulator supplies.
+
+properties:
+  compatible:
+    const: qcom,msm8992-usb-hs-phy
+  reg:
+    items:
+      - description: USB2 PHY CSR registers
+      - description: Shared DWC3 QSCRATCH registers
+  reg-names:
+    items:
+      - const: phy-csr
+      - const: qscratch
+  "#phy-cells":
+    const: 0
+  clocks:
+    maxItems: 3
+  clock-names:
+    items:
+      - const: ref
+      - const: ahb
+      - const: sleep
+  resets:
+    maxItems: 1
+  power-domains:
+    maxItems: 2
+  power-domain-names:
+    items:
+      - const: cx
+      - const: mx
+  required-opps:
+    maxItems: 2
+  vdda1p8-supply: true
+  vdda3p3-supply: true
+  qcom,hsphy-init:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    maximum: 67108863
+    description: Parameter override value for analogue PHY tuning.
+
+required:
+  - compatible
+  - reg
+  - reg-names
+  - "#phy-cells"
+  - clocks
+  - clock-names
+  - resets
+  - power-domains
+  - power-domain-names
+  - required-opps
+  - vdda1p8-supply
+  - vdda3p3-supply
+  - qcom,hsphy-init
+
+additionalProperties: false

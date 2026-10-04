@@ -218,7 +218,7 @@ static const struct msm_dsi_cfg_handler *dsi_get_config(
 		goto disable_clks;
 	}
 
-	cfg_hnd = msm_dsi_cfg_get(major, minor);
+	cfg_hnd = msm_dsi_cfg_get(major, minor, dev->of_node);
 
 	DBG("%s: Version %x:%x\n", __func__, major, minor);
 
@@ -2091,6 +2091,7 @@ int msm_dsi_host_xfer_prepare(struct mipi_dsi_host *host,
 {
 	struct msm_dsi_host *msm_host = to_msm_dsi_host(host);
 	const struct msm_dsi_cfg_handler *cfg_hnd = msm_host->cfg_hnd;
+	int ret;
 
 	/* TODO: make sure dsi_cmd_mdp is idle.
 	 * Since DSI6G v1.2.0, we can set DSI_TRIG_CTRL.BLOCK_DMA_WITHIN_FRAME
@@ -2102,9 +2103,15 @@ int msm_dsi_host_xfer_prepare(struct mipi_dsi_host *host,
 	 * mdss interrupt is generated in mdp core clock domain
 	 * mdp clock need to be enabled to receive dsi interrupt
 	 */
-	pm_runtime_get_sync(&msm_host->pdev->dev);
-	cfg_hnd->ops->link_clk_set_rate(msm_host);
-	cfg_hnd->ops->link_clk_enable(msm_host);
+	ret = pm_runtime_resume_and_get(&msm_host->pdev->dev);
+	if (ret < 0)
+		return ret;
+	ret = cfg_hnd->ops->link_clk_set_rate(msm_host);
+	if (ret)
+		goto put_runtime;
+	ret = cfg_hnd->ops->link_clk_enable(msm_host);
+	if (ret)
+		goto put_runtime;
 
 	/* TODO: vote for bus bandwidth */
 
@@ -2119,6 +2126,10 @@ int msm_dsi_host_xfer_prepare(struct mipi_dsi_host *host,
 	dsi_intr_ctrl(msm_host, DSI_IRQ_MASK_CMD_DMA_DONE, 1);
 
 	return 0;
+
+put_runtime:
+	pm_runtime_put(&msm_host->pdev->dev);
+	return ret;
 }
 
 void msm_dsi_host_xfer_restore(struct mipi_dsi_host *host,
@@ -2435,14 +2446,16 @@ int msm_dsi_host_power_on(struct mipi_dsi_host *host,
 		goto unlock_ret;
 	}
 
-	pm_runtime_get_sync(&msm_host->pdev->dev);
+	ret = pm_runtime_resume_and_get(&msm_host->pdev->dev);
+	if (ret < 0)
+		goto fail_disable_reg;
 	ret = cfg_hnd->ops->link_clk_set_rate(msm_host);
 	if (!ret)
 		ret = cfg_hnd->ops->link_clk_enable(msm_host);
 	if (ret) {
 		pr_err("%s: failed to enable link clocks. ret=%d\n",
 		       __func__, ret);
-		goto fail_disable_reg;
+		goto fail_put_runtime;
 	}
 
 	ret = pinctrl_pm_select_default_state(&msm_host->pdev->dev);
@@ -2463,6 +2476,7 @@ int msm_dsi_host_power_on(struct mipi_dsi_host *host,
 
 fail_disable_clk:
 	cfg_hnd->ops->link_clk_disable(msm_host);
+fail_put_runtime:
 	pm_runtime_put(&msm_host->pdev->dev);
 fail_disable_reg:
 	regulator_bulk_disable(msm_host->cfg_hnd->cfg->num_regulators,

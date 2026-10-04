@@ -175,5 +175,7 @@
 #define PCIE_PHY_1_RESET		3
 #define QUSB2_PHY_RESET			4
 #define MSS_RESET				5
+#define USB2_HS_PHY_ONLY_RESET		6
+#define USB30_RESET			7
 
 #endif

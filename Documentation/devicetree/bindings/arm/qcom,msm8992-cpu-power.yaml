@@ -1,0 +1,56 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/arm/qcom,msm8992-cpu-power.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: Qualcomm MSM8992 legacy CPU power controls
+
+maintainers:
+  - Konrad Dybcio <konradybcio@kernel.org>
+
+properties:
+  compatible:
+    enum:
+      - qcom,msm8992-cpu-power
+      - qcom,msm8992-acc
+  reg:
+    minItems: 2
+    maxItems: 7
+  reg-names:
+    minItems: 2
+    maxItems: 7
+
+allOf:
+  - if:
+      properties:
+        compatible:
+          const: qcom,msm8992-cpu-power
+    then:
+      properties:
+        reg:
+          minItems: 7
+        reg-names:
+          items:
+            - const: a53-l2
+            - const: a57-l2
+            - const: a53-saw
+            - const: a57-saw
+            - const: a53-q2s
+            - const: a57-q2s
+            - const: l2-kick
+    else:
+      properties:
+        reg:
+          maxItems: 2
+        reg-names:
+          items:
+            - const: ldo
+            - const: acc
+
+required:
+  - compatible
+  - reg
+  - reg-names
+
+additionalProperties: false

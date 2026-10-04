@@ -2624,6 +2624,8 @@ static struct gdsc *gcc_msm8994_gdscs[] = {
 };
 
 static const struct qcom_reset_map gcc_msm8994_resets[] = {
+	[USB30_RESET] = { 0x03c0 },
+	[USB2_HS_PHY_ONLY_RESET] = { 0x04b0 },
 	[USB3_PHY_RESET] = { 0x1400 },
 	[USB3PHY_PHY_RESET] = { 0x1404 },
 	[MSS_RESET] = { 0x1680 },

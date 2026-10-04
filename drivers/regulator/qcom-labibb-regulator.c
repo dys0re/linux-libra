@@ -753,6 +753,7 @@ static const struct labibb_regulator_data pmi8998_labibb_data[] = {
 };
 
 static const struct of_device_id qcom_labibb_match[] = {
+	{ .compatible = "qcom,pmi8994-lab-ibb", .data = &pmi8998_labibb_data},
 	{ .compatible = "qcom,pmi8998-lab-ibb", .data = &pmi8998_labibb_data},
 	{ },
 };
@@ -822,7 +823,7 @@ static int qcom_labibb_regulator_probe(struct platform_device *pdev)
 				irq = -EINVAL;
 
 			of_node_put(reg_node);
-			return dev_err_probe(vreg->dev, irq,
+			return dev_err_probe(dev, irq,
 					     "Short-circuit irq not found.\n");
 		}
 		vreg->sc_irq = irq;
@@ -837,6 +838,17 @@ static int qcom_labibb_regulator_probe(struct platform_device *pdev)
 		vreg->dev = dev;
 		vreg->base = reg_data->base;
 		vreg->type = reg_data->type;
+		/* PMI8994 LCD/AMOLED selection is a secure boot-time setting.
+		 * Do not silently drive an LCD with an AMOLED-configured bias pair.
+		 */
+		if (of_device_is_compatible(dev->of_node, "qcom,pmi8994-lab-ibb")) {
+			ret = regmap_read(reg_regmap, vreg->base + 0x44, &type);
+			if (ret)
+				return ret;
+			if (type & BIT(7))
+				return dev_err_probe(dev, -EINVAL,
+						     "PMI8994 bias is not configured for LCD\n");
+		}
 		INIT_DELAYED_WORK(&vreg->sc_recovery_work,
 				  qcom_labibb_sc_recovery_worker);
 

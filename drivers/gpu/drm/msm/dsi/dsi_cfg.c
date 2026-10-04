@@ -4,6 +4,7 @@
  */
 
 #include "dsi_cfg.h"
+#include <linux/of.h>
 
 static const char * const dsi_v2_bus_clk_names[] = {
 	"core_mmss", "iface", "bus",
@@ -96,6 +97,16 @@ static const struct msm_dsi_config msm8994_dsi_cfg = {
 	.io_start = {
 		{ 0xfd998000, 0xfd9a0000 },
 	},
+};
+
+/* Panel bias rails belong to the panel, not the DSI host. */
+static const struct msm_dsi_config msm8992_dsi_cfg = {
+	.io_offset = DSI_6G_REG_SHIFT,
+	.regulator_data = msm8994_dsi_regulators,
+	.num_regulators = 4,
+	.bus_clk_names = dsi_6g_bus_clk_names,
+	.num_bus_clks = ARRAY_SIZE(dsi_6g_bus_clk_names),
+	.io_start = { { 0xfd994000, 0xfd996000 } },
 };
 
 static const struct regulator_bulk_data msm8996_dsi_regulators[] = {
@@ -300,10 +311,19 @@ static const struct msm_dsi_cfg_handler dsi_cfg_handlers[] = {
 		&sm8650_dsi_cfg, &msm_dsi_6g_v2_host_ops},
 };
 
-const struct msm_dsi_cfg_handler *msm_dsi_cfg_get(u32 major, u32 minor)
+const struct msm_dsi_cfg_handler *msm_dsi_cfg_get(u32 major, u32 minor,
+					       const struct device_node *np)
 {
+	static const struct msm_dsi_cfg_handler msm8992_handler = {
+		MSM_DSI_VER_MAJOR_6G, MSM_DSI_6G_VER_MINOR_V1_3,
+		&msm8992_dsi_cfg, &msm_dsi_6g_host_ops,
+	};
 	const struct msm_dsi_cfg_handler *cfg_hnd = NULL;
 	int i;
+
+	if (major == msm8992_handler.major && minor == msm8992_handler.minor &&
+	    of_device_is_compatible(np, "qcom,msm8992-dsi-ctrl"))
+		return &msm8992_handler;
 
 	for (i = ARRAY_SIZE(dsi_cfg_handlers) - 1; i >= 0; i--) {
 		if ((dsi_cfg_handlers[i].major == major) &&

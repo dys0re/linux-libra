@@ -180,6 +180,15 @@ config PHY_QCOM_USB_HSIC
 	help
 	  Support for the USB HSIC ULPI compliant PHY on QCOM chipsets.
 
+config PHY_QCOM_USB_HS_20NM
+	tristate "Qualcomm MSM8992/8994 High-Speed USB PHY"
+	depends on OF && (ARCH_QCOM || COMPILE_TEST)
+	depends on PM
+	select GENERIC_PHY
+	help
+	  Support the USB2 PHY paired with the DWC3 controller on MSM8992
+	  and MSM8994, including its QSCRATCH controls and RPM power votes.
+
 config PHY_QCOM_USB_HS_28NM
 	tristate "Qualcomm 28nm High-Speed PHY"
 	depends on OF && (ARCH_QCOM || COMPILE_TEST)

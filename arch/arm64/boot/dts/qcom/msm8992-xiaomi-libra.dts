@@ -28,15 +28,16 @@
 	qcom,pmic-id = <65545 65546 0 0>;
 	qcom,board-id = <12 0>;
 
-	/* This enables graphical output via bootloader-enabled display */
+	/* The simplefb variant keeps the bootloader-enabled display as fallback. */
 	chosen {
-		bootargs = "earlycon=tty0 console=tty0 maxcpus=1";
+		bootargs = "earlycon=tty0 console=tty0";
 
 		#address-cells = <2>;
 		#size-cells = <2>;
 		ranges;
 
 		framebuffer0: framebuffer@3400000 {
+			status = "disabled";
 			compatible = "simple-framebuffer";
 			reg = <0 0x3400000 0 (1080 * 1920 * 3)>;
 			width = <1080>;
@@ -130,7 +131,6 @@
 			reg = <0 0xdfc00000 0 0x40000>;
 			console-size = <0x10000>;
 			record-size = <0x10000>;
-			ftrace-size = <0x10000>;
 			pmsg-size = <0x20000>;
 		};
 	};
@@ -140,6 +140,54 @@
 	status = "okay";
 
 	/* Atmel or Synaptics touchscreen */
+};
+
+&CPU0 {
+	clocks = <&cpu_aux_clk>;
+	enable-method = "qcom,8994-arm-cortex-acc";
+	qcom,acc = <&acc0>;
+	qcom,l2-power = <&cpu_power>;
+	qcom,ldo-retention-voltage = <0x2a>;
+};
+
+&CPU1 {
+	clocks = <&cpu_aux_clk>;
+	enable-method = "qcom,8994-arm-cortex-acc";
+	qcom,acc = <&acc1>;
+	qcom,l2-power = <&cpu_power>;
+	qcom,ldo-retention-voltage = <0x2a>;
+};
+
+&CPU2 {
+	clocks = <&cpu_aux_clk>;
+	enable-method = "qcom,8994-arm-cortex-acc";
+	qcom,acc = <&acc2>;
+	qcom,l2-power = <&cpu_power>;
+	qcom,ldo-retention-voltage = <0x2a>;
+};
+
+&CPU3 {
+	clocks = <&cpu_aux_clk>;
+	enable-method = "qcom,8994-arm-cortex-acc";
+	qcom,acc = <&acc3>;
+	qcom,l2-power = <&cpu_power>;
+	qcom,ldo-retention-voltage = <0x2a>;
+};
+
+&CPU4 {
+	clocks = <&cpu_aux_clk>;
+	enable-method = "qcom,8994-arm-cortex-acc";
+	qcom,acc = <&acc4>;
+	qcom,l2-power = <&cpu_power>;
+	qcom,ldo-retention-voltage = <0x3e>;
+};
+
+&CPU5 {
+	clocks = <&cpu_aux_clk>;
+	enable-method = "qcom,8994-arm-cortex-acc";
+	qcom,acc = <&acc5>;
+	qcom,l2-power = <&cpu_power>;
+	qcom,ldo-retention-voltage = <0x3e>;
 };
 
 &blsp1_i2c5 {
@@ -172,6 +220,17 @@
 
 &blsp2_uart2 {
 	status = "okay";
+};
+
+&mmcc {
+	/* MMCC resolves the DSI RCG parents through these firmware names. */
+	clocks = <&xo_board>,
+		 <&gcc GPLL0_OUT_MMSSCC>,
+		 <&rpmcc RPM_SMD_MMSSNOC_AHB_CLK>,
+		 <&rpmcc RPM_SMD_GFX3D_CLK_SRC>,
+		 <&mdss_dsi0_phy 1>,
+		 <&mdss_dsi0_phy 0>,
+		 <0>, <0>, <0>;
 };
 
 &pm8994_spmi_regulators {
@@ -427,4 +486,94 @@
 	mmc-hs400-1_8v;
 	vmmc-supply = <&pm8994_l20>;
 	vqmmc-supply = <&pm8994_s4>;
+};
+
+&usb_hs_phy {
+	vdda1p8-supply = <&pm8994_l6>;
+	vdda3p3-supply = <&pm8994_l24>;
+	status = "okay";
+};
+
+&cpu_aux_clk {
+	status = "okay";
+};
+
+&usb3 {
+	usb@f9200000 {
+		phys = <&usb_hs_phy>;
+		phy-names = "usb2-phy";
+		snps,hsphy_interface = "utmi";
+	};
+};
+
+&mdss {
+	status = "okay";
+};
+
+&mdss_dsi0 {
+	status = "okay";
+	vdda-supply = <&pm8994_l2>;
+	vddio-supply = <&pm8994_l12>;
+	vcca-supply = <&pm8994_l28>;
+	vdd-supply = <&pm8994_l14>;
+
+	panel: panel@0 {
+		compatible = "sharp,libra-rsp61322";
+		reg = <0>;
+		avdd-supply = <&pmi8994_lab>;
+		avee-supply = <&pmi8994_ibb>;
+		reset-gpios = <&tlmm 78 GPIO_ACTIVE_LOW>;
+		enable-gpios = <&pm8994_gpios 14 GPIO_ACTIVE_HIGH>;
+		backlight = <&pmi8994_wled>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&panel_reset_default &panel_enable_default>;
+		port {
+			panel_in: endpoint {
+				remote-endpoint = <&mdss_dsi0_out>;
+			};
+		};
+	};
+};
+
+&mdss_dsi0_out {
+	remote-endpoint = <&panel_in>;
+	data-lanes = <0 1 2 3>;
+};
+
+&mdss_dsi0_phy {
+	status = "okay";
+	vddio-supply = <&pm8994_l12>;
+	vcca-supply = <&pm8994_l28>;
+};
+
+&pmi8994_labibb {
+	status = "okay";
+};
+
+&pmi8994_wled {
+	status = "okay";
+	default-brightness = <512>;
+	qcom,current-limit-microamp = <16000>;
+	qcom,current-boost-limit = <980>;
+	qcom,switching-freq = <800>;
+	qcom,ovp-millivolt = <29600>;
+	qcom,enabled-strings = <0 1 2 3>;
+};
+
+&tlmm {
+	panel_reset_default: panel-reset-state {
+		pins = "gpio78";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-disable;
+	};
+};
+
+&pm8994_gpios {
+	panel_enable_default: panel-enable-state {
+		pins = "gpio14";
+		function = "normal";
+		power-source = <2>;
+		bias-disable;
+	};
 };

@@ -21,6 +21,7 @@ properties:
           - qcom,ipq8074-dwc3
           - qcom,ipq9574-dwc3
           - qcom,msm8953-dwc3
+          - qcom,msm8992-dwc3
           - qcom,msm8994-dwc3
           - qcom,msm8996-dwc3
           - qcom,msm8998-dwc3
@@ -159,6 +160,32 @@ required:
   - interrupt-names
 
 allOf:
+  - if:
+      properties:
+        compatible:
+          contains:
+            const: qcom,msm8992-dwc3
+    then:
+      properties:
+        clocks:
+          minItems: 5
+          maxItems: 5
+        clock-names:
+          items:
+            - const: core
+            - const: iface
+            - const: sleep
+            - const: mock_utmi
+            - const: xo
+        interrupts:
+          maxItems: 2
+        interrupt-names:
+          items:
+            - const: pwr_event
+            - const: hs_phy_irq
+      required:
+        - resets
+
   - if:
       properties:
         compatible:

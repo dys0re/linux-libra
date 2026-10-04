@@ -551,6 +551,8 @@ static const struct of_device_id dsi_phy_dt_match[] = {
 #ifdef CONFIG_DRM_MSM_DSI_20NM_PHY
 	{ .compatible = "qcom,dsi-phy-20nm",
 	  .data = &dsi_phy_20nm_cfgs },
+	{ .compatible = "qcom,msm8992-dsi-phy-20nm",
+	  .data = &dsi_phy_20nm_8992_cfgs },
 #endif
 #ifdef CONFIG_DRM_MSM_DSI_28NM_8960_PHY
 	{ .compatible = "qcom,dsi-phy-28nm-8960",
@@ -708,16 +710,20 @@ static int dsi_phy_driver_probe(struct platform_device *pdev)
 
 	if (phy->cfg->ops.pll_init) {
 		ret = phy->cfg->ops.pll_init(phy);
-		if (ret)
+		if (ret) {
+			dsi_phy_disable_resource(phy);
 			return dev_err_probe(dev, ret,
 					     "PLL init failed; need separate clk driver\n");
+		}
 	}
 
 	ret = devm_of_clk_add_hw_provider(dev, of_clk_hw_onecell_get,
 				     phy->provided_clocks);
-	if (ret)
+	if (ret) {
+		dsi_phy_disable_resource(phy);
 		return dev_err_probe(dev, ret,
 				     "Failed to register clk provider\n");
+	}
 
 	dsi_phy_disable_resource(phy);
 

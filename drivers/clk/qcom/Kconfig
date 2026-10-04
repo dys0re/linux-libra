@@ -393,6 +393,14 @@ config MSM_MMCC_8994
 	  Say Y if you want to support multimedia devices such as display,
 	  graphics, video encode/decode, camera, etc.
 
+config MSM_CPU_8992
+	bool "MSM8992 CPU auxiliary clocks"
+	depends on ARM64 && QCOM_MSM8992_CPU_OPS
+	select MSM_GCC_8994
+	help
+	  Keep the GPLL0 auxiliary CPU clock running during legacy CPU
+	  bring-up. Both clusters initially run at 600 MHz without DVFS.
+
 config MSM_GCC_8994
 	tristate "MSM8994 Global Clock Controller"
 	help

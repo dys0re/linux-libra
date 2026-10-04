@@ -35,6 +35,10 @@
 #include "qcom_scm.h"
 #include "qcom_tzmem.h"
 
+#ifdef CONFIG_QCOM_MSM8992_CPU_OPS
+#include <asm/cacheflush.h>
+#endif
+
 static u32 download_mode;
 
 #define GIC_SPI_BASE        32
@@ -425,6 +429,54 @@ static int qcom_scm_set_boot_addr_mc(void *entry, unsigned int flags)
 
 	return qcom_scm_call(__scm->dev, &desc, NULL);
 }
+
+#ifdef CONFIG_QCOM_MSM8992_CPU_OPS
+/* smp_prepare_cpus runs before SCM probe and its tzmem pool are available. */
+int __init qcom_scm_msm8992_set_boot_addr(phys_addr_t entry)
+{
+	static u64 args[16] __initdata __aligned(128);
+	struct arm_smccc_quirk quirk = { .id = ARM_SMCCC_QUIRK_QCOM_A6 };
+	struct arm_smccc_res res;
+	enum qcom_scm_convention convention = __get_convention();
+	u32 smc_convention, fn;
+
+	if (convention == SMC_CONVENTION_LEGACY)
+		return -EOPNOTSUPP;
+
+	smc_convention = convention == SMC_CONVENTION_ARM_64 ?
+			 ARM_SMCCC_SMC_64 : ARM_SMCCC_SMC_32;
+	if (smc_convention == ARM_SMCCC_SMC_32) {
+		__le32 *ext = (__le32 *)args;
+
+		if (entry > U32_MAX)
+			return -ERANGE;
+		ext[0] = cpu_to_le32(U32_MAX);
+		ext[1] = cpu_to_le32(U32_MAX);
+		ext[2] = cpu_to_le32(QCOM_SCM_BOOT_MC_FLAG_AARCH64 |
+				     QCOM_SCM_BOOT_MC_FLAG_COLDBOOT);
+	} else {
+		__le64 *ext = (__le64 *)args;
+
+		ext[0] = cpu_to_le64(U64_MAX);
+		ext[1] = cpu_to_le64(U64_MAX);
+		ext[2] = cpu_to_le64(QCOM_SCM_BOOT_MC_FLAG_AARCH64 |
+				     QCOM_SCM_BOOT_MC_FLAG_COLDBOOT);
+	}
+	dcache_clean_inval_poc((unsigned long)args,
+			      (unsigned long)args + sizeof(args));
+	fn = ARM_SMCCC_CALL_VAL(ARM_SMCCC_STD_CALL, smc_convention,
+			       ARM_SMCCC_OWNER_SIP,
+			       SCM_SMC_FNID(QCOM_SCM_SVC_BOOT, QCOM_SCM_BOOT_SET_ADDR_MC));
+	do {
+		arm_smccc_smc_quirk(fn, QCOM_SCM_ARGS(6), entry, U32_MAX, U32_MAX,
+				    __pa_symbol(args), quirk.state.a6, 0, &res, &quirk);
+		if (res.a0 == QCOM_SCM_INTERRUPTED)
+			fn = res.a0;
+	} while (res.a0 == QCOM_SCM_INTERRUPTED);
+
+	return res.a0 ? qcom_scm_remap_error(res.a0) : 0;
+}
+#endif
 
 /**
  * qcom_scm_set_warm_boot_addr() - Set the warm boot address for all cpus
@@ -862,7 +914,7 @@ int qcom_scm_io_readl(phys_addr_t addr, unsigned int *val)
 	int ret;
 
 
-	ret = qcom_scm_call_atomic(__scm->dev, &desc, &res);
+	ret = qcom_scm_call_atomic(__scm ? __scm->dev : NULL, &desc, &res);
 	if (ret >= 0)
 		*val = res.result[0];
 
@@ -881,7 +933,7 @@ int qcom_scm_io_writel(phys_addr_t addr, unsigned int val)
 		.owner = ARM_SMCCC_OWNER_SIP,
 	};
 
-	return qcom_scm_call_atomic(__scm->dev, &desc, NULL);
+	return qcom_scm_call_atomic(__scm ? __scm->dev : NULL, &desc, NULL);
 }
 EXPORT_SYMBOL_GPL(qcom_scm_io_writel);
 

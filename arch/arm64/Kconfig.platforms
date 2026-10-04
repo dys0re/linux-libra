@@ -270,6 +270,15 @@ config ARCH_QCOM
 	help
 	  This enables support for the ARMv8 based Qualcomm chipsets.
 
+config QCOM_MSM8992_CPU_OPS
+	bool "MSM8992 legacy SCM/ACC CPU boot protocol"
+	depends on ARCH_QCOM && SMP
+	select QCOM_SCM
+	help
+	  Support the pre-PSCI firmware used by Xiaomi Mi 4C. Secondary
+	  CPUs are started through Qualcomm SCM and the APCS power controls.
+	  CPU hot-unplug and deep idle are not supported by this protocol yet.
+
 config ARCH_REALTEK
 	bool "Realtek Platforms"
 	select RESET_CONTROLLER

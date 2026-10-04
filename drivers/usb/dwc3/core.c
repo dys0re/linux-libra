@@ -1062,6 +1062,9 @@ static void dwc3_core_setup_global_control(struct dwc3 *dwc)
 	    hw_mode != DWC3_GHWPARAMS0_MODE_GADGET && DWC3_VER_IS(DWC31, 200A))
 		reg |= DWC3_GCTL_DSBLCLKGTNG;
 
+	if (dwc->dis_clk_gating_quirk)
+		reg |= DWC3_GCTL_DSBLCLKGTNG;
+
 	/* check if current dwc3 is on simulation board */
 	if (dwc->hwparams.hwparams6 & DWC3_GHWPARAMS6_EN_FPGA) {
 		dev_info(dwc->dev, "Running with FPGA optimizations\n");
@@ -1770,6 +1773,8 @@ static void dwc3_get_properties(struct dwc3 *dwc)
 				"snps,dis_u3_susphy_quirk");
 	dwc->dis_u2_susphy_quirk = device_property_read_bool(dev,
 				"snps,dis_u2_susphy_quirk");
+	dwc->dis_clk_gating_quirk =
+		device_property_read_bool(dev, "snps,dis-clk-gating-quirk");
 	dwc->dis_enblslpm_quirk = device_property_read_bool(dev,
 				"snps,dis_enblslpm_quirk");
 	dwc->dis_u1_entry_quirk = device_property_read_bool(dev,
