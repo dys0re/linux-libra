@@ -28,7 +28,7 @@ ip link set lo up
 	done
 ) < /dev/null > /run/libra-acm-getty.log 2>&1 &
 
-printf '\nAlpine Mi 4C bring-up initrd [diagnostic v34: normal preview without active-video DCS read]\n'
+printf '\nAlpine Mi 4C bring-up initrd [v35: native display cleanup]\n'
 printf 'RAM-only, unauthenticated test shell\n'
 
 # Run independently so a missing UDC cannot block the local diagnostic shell.

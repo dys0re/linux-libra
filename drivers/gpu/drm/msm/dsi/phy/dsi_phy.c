@@ -704,8 +704,6 @@ static int dsi_phy_driver_probe(struct platform_device *pdev)
 	/* PLL init will call into clk_register which requires
 	 * register access, so we need to enable power and ahb clock.
 	 */
-	if (of_device_is_compatible(dev->of_node, "qcom,msm8992-dsi-phy-20nm"))
-		dev_info(dev, "MSM8992 DSI PHY: enabling MDSS power and AHB\n");
 	ret = dsi_phy_enable_resource(phy);
 	if (ret)
 		return ret;

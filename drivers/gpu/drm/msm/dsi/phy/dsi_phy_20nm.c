@@ -233,7 +233,7 @@ static int pll_20nm_prepare(struct clk_hw *hw)
 	writel(pll->post_div, base + PLL_POST_DIV);
 	writel(3, base + PLL_BYTE_DIV);
 	writel(pll->pixel_div, base + PLL_PIXEL_DIV);
-	dev_info(&phy->pdev->dev,
+	dev_dbg(&phy->pdev->dev,
 		 "DSI PLL start: vco=%lu ref=19200000 post=%#x pixel=%#x\n",
 		 pll->rate, pll->post_div, pll->pixel_div);
 
@@ -290,7 +290,7 @@ static int pll_20nm_prepare(struct clk_hw *hw)
 	}
 	pll_20nm_powerdown(pll->aux_base);
 	phy->pll_on = true;
-	dev_info(&phy->pdev->dev, "DSI PLL locked: vco=%lu status=%#x\n",
+	dev_dbg(&phy->pdev->dev, "DSI PLL locked: vco=%lu status=%#x\n",
 		 pll->rate, status);
 	return 0;
 }
@@ -351,7 +351,6 @@ static int dsi_pll_20nm_8992_init(struct msm_dsi_phy *phy)
 	if (IS_ERR(pll->aux_base))
 		return PTR_ERR(pll->aux_base);
 	snprintf(name, sizeof(name), "dsi%dvco_clk", phy->id);
-	dev_info(dev, "MSM8992 DSI PLL: registering VCO\n");
 	pll->hw.init = &init;
 	ret = devm_clk_hw_register(dev, &pll->hw);
 	if (ret)
@@ -359,7 +358,6 @@ static int dsi_pll_20nm_8992_init(struct msm_dsi_phy *phy)
 	phy->vco_hw = &pll->hw;
 
 	snprintf(name, sizeof(name), "dsi%dndiv", phy->id);
-	dev_info(dev, "MSM8992 DSI PLL: registering N divider\n");
 	div_init.parent_hws = (const struct clk_hw *[]){ &pll->hw };
 	pll->ndiv.hw.init = &div_init;
 	pll->ndiv.config = &pll->post_div;
@@ -375,7 +373,6 @@ static int dsi_pll_20nm_8992_init(struct msm_dsi_phy *phy)
 		return PTR_ERR(indirect);
 
 	snprintf(name, sizeof(name), "dsi%dbyte_mux", phy->id);
-	dev_info(dev, "MSM8992 DSI PLL: registering byte mux\n");
 	mux_init.parent_hws = (const struct clk_hw *[]){ &pll->hw, indirect };
 	pll->byte_mux.hw.init = &mux_init;
 	pll->byte_mux.config = &pll->post_div;
@@ -391,7 +388,6 @@ static int dsi_pll_20nm_8992_init(struct msm_dsi_phy *phy)
 	phy->provided_clocks->hws[DSI_BYTE_PLL_CLK] = hw;
 
 	snprintf(name, sizeof(name), "dsi%dpixel_div", phy->id);
-	dev_info(dev, "MSM8992 DSI PLL: registering pixel divider\n");
 	div_init.flags = CLK_SET_RATE_GATE;
 	pll->pixel.hw.init = &div_init;
 	pll->pixel.config = &pll->pixel_div;
@@ -405,7 +401,6 @@ static int dsi_pll_20nm_8992_init(struct msm_dsi_phy *phy)
 	if (IS_ERR(hw))
 		return PTR_ERR(hw);
 	phy->provided_clocks->hws[DSI_PIXEL_PLL_CLK] = hw;
-	dev_info(dev, "MSM8992 DSI PLL: output clocks registered\n");
 	return 0;
 }
 
@@ -500,7 +495,7 @@ static int dsi_20nm_phy_enable(struct msm_dsi_phy *phy,
 		timing->shared_timings.clk_pre = 0x2f;
 		timing->shared_timings.clk_post = 0x19;
 		timing->shared_timings.clk_pre_inc_by_2 = false;
-		dev_info(&phy->pdev->dev, "Libra PHY: selected factory 1080p60 timings\n");
+		dev_dbg(&phy->pdev->dev, "Libra PHY: selected factory 1080p60 timings\n");
 	}
 
 	dsi_20nm_phy_regulator_ctrl(phy, true);

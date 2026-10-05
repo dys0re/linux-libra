@@ -135,9 +135,6 @@ elif [ "$stage" = msm ]; then
 		sleep 1
 		exit "$result"
 	'; then result=0; else result=$?; fi
-elif [ "$stage" = panel ]; then
-	printf 'Loading %s with prepared-panel diagnostics...\n' "$module"
-	if /usr/sbin/libra-kmsg "$output/$stage-live.txt" /sbin/modprobe "$module" read_power_mode=1; then result=0; else result=$?; fi
 else
 	printf 'Loading %s...\n' "$module"
 	if /usr/sbin/libra-kmsg "$output/$stage-live.txt" /sbin/modprobe "$module"; then result=0; else result=$?; fi

@@ -209,7 +209,6 @@ struct wled {
 	bool cabc_disabled;
 	int short_irq;
 	int ovp_irq;
-	char *firmware_state;
 
 	struct wled_config cfg;
 	struct delayed_work ovp_work;
@@ -1924,96 +1923,6 @@ static const struct backlight_ops wled_ops = {
 	.get_brightness = wled_get_brightness,
 };
 
-static ssize_t wled4_read_state(struct wled *wled, char *buf, size_t size)
-{
-	static const u8 ctrl_regs[] = {
-		0x08, 0x10, 0x44, 0x45, 0x46, 0x48, 0x49, 0x4b,
-		0x4c, 0x4d, 0x4e, 0x5e, 0xe2,
-	};
-	static const u8 sink_regs[] = { 0x46, 0x47, 0x4a, 0x4b, 0xe6 };
-	static const u8 string_regs[] = { 0x50, 0x51, 0x52, 0x53, 0x56, 0x57, 0x58 };
-	ssize_t len = 0;
-	unsigned int group, i, j, value;
-	u16 addr;
-	int ret;
-
-	/* Only documented WLED4 registers, never a dump of the entire PMIC. */
-	mutex_lock(&wled->lock);
-	len += scnprintf(buf + len, size - len, "version=%u ctrl=%04x sink=%04x strings=%u cabc=%u external_pfet=%u\n",
-			     wled->version, wled->ctrl_addr, wled->sink_addr,
-			     wled->cfg.num_strings, wled->cfg.cabc, wled->cfg.external_pfet);
-	for (group = 0; group < 2; group++) {
-		const u8 *regs = group ? sink_regs : ctrl_regs;
-		unsigned int count = group ? ARRAY_SIZE(sink_regs) : ARRAY_SIZE(ctrl_regs);
-		u16 base = group ? wled->sink_addr : wled->ctrl_addr;
-
-		for (i = 0; i < count; i++) {
-			addr = base + regs[i];
-			ret = regmap_read(wled->regmap, addr, &value);
-			if (ret)
-				len += scnprintf(buf + len, size - len, "%04x: error=%d\n", addr, ret);
-			else
-				len += scnprintf(buf + len, size - len, "%04x: %02x\n", addr, value);
-		}
-	}
-	for (i = 0; i < wled->cfg.num_strings; i++) {
-		unsigned int string = wled->cfg.enabled_strings[i];
-
-		for (j = 0; j < ARRAY_SIZE(string_regs); j++) {
-			addr = wled->sink_addr + string * 0x10 + string_regs[j];
-			ret = regmap_read(wled->regmap, addr, &value);
-			if (ret)
-				len += scnprintf(buf + len, size - len, "%04x: error=%d\n", addr, ret);
-			else
-				len += scnprintf(buf + len, size - len, "%04x: %02x\n", addr, value);
-		}
-	}
-	mutex_unlock(&wled->lock);
-	return len;
-}
-
-static ssize_t hardware_state_show(struct device *dev,
-				   struct device_attribute *attr, char *buf)
-{
-	struct wled *wled = dev_get_drvdata(dev);
-
-	return wled4_read_state(wled, buf, PAGE_SIZE);
-}
-static DEVICE_ATTR_RO(hardware_state);
-
-static ssize_t firmware_state_show(struct device *dev,
-				   struct device_attribute *attr, char *buf)
-{
-	struct wled *wled = dev_get_drvdata(dev);
-
-	return sysfs_emit(buf, "%s", wled->firmware_state);
-}
-static DEVICE_ATTR_RO(firmware_state);
-
-static struct attribute *wled4_state_attrs[] = {
-	&dev_attr_hardware_state.attr,
-	&dev_attr_firmware_state.attr,
-	NULL,
-};
-
-static umode_t wled4_state_visible(struct kobject *kobj,
-				 struct attribute *attr, int index)
-{
-	struct wled *wled = dev_get_drvdata(kobj_to_dev(kobj));
-
-	return wled && wled->version == 4 ? attr->mode : 0;
-}
-
-static const struct attribute_group wled4_state_group = {
-	.attrs = wled4_state_attrs,
-	.is_visible = wled4_state_visible,
-};
-
-static const struct attribute_group *wled4_state_groups[] = {
-	&wled4_state_group,
-	NULL,
-};
-
 static int wled_probe(struct platform_device *pdev)
 {
 	struct backlight_properties props;
@@ -2054,12 +1963,6 @@ static int wled_probe(struct platform_device *pdev)
 	if (wled->cfg.complete_init && wled->cfg.dim_9bit)
 		wled->max_brightness = min_t(u32, wled->max_brightness, 511);
 
-	if (wled->version == 4) {
-		wled->firmware_state = devm_kzalloc(wled->dev, PAGE_SIZE, GFP_KERNEL);
-		if (!wled->firmware_state)
-			return -ENOMEM;
-		wled4_read_state(wled, wled->firmware_state, PAGE_SIZE);
-	}
 
 	switch (wled->version) {
 	case 3:
@@ -2133,13 +2036,7 @@ static int wled_probe(struct platform_device *pdev)
 	rc = backlight_update_status(bl);
 	if (rc)
 		return rc;
-	if (!rc)
-		dev_info(wled->dev, "WLED handoff: module=%#x requested=%u actual=%d CABC=%u\n",
-			 mod_en, val, wled_get_brightness(bl), wled->cfg.cabc);
-	if (wled->cfg.complete_init)
-		dev_info(wled->dev, "WLED complete setup: feedback=%u vref=%umV boost-duty=%uns mod=%ukHz mode=%u delay=%uus\n",
-			 wled->cfg.fdbk_output, wled->cfg.vref_mv, wled->cfg.boost_duty_ns,
-			 wled->cfg.mod_freq_khz, wled->cfg.dim_mode, wled->cfg.sync_dly_us);
+
 	return rc;
 };
 
@@ -2173,7 +2070,6 @@ static struct platform_driver wled_driver = {
 	.driver	= {
 		.name = "qcom,wled",
 		.of_match_table	= wled_match_table,
-		.dev_groups = wled4_state_groups,
 	},
 };
 
