@@ -5,6 +5,8 @@
  * Author: Rob Clark <robdclark@gmail.com>
  */
 
+#include <linux/of.h>
+
 #include <drm/drm_crtc.h>
 #include <drm/drm_probe_helper.h>
 
@@ -159,15 +161,30 @@ static void mdp5_vid_encoder_enable(struct drm_encoder *encoder)
 	struct mdp5_interface *intf = mdp5_encoder->intf;
 	struct mdp5_pipeline *pipeline = mdp5_crtc_get_pipeline(encoder->crtc);
 	int intfn = intf->num;
+	bool flush_before_enable = of_device_is_compatible(
+		mdp5_kms->pdev->dev.of_node, "qcom,msm8992-mdp5");
 	unsigned long flags;
 
 	if (WARN_ON(mdp5_encoder->enabled))
 		return;
 
+	/* The MSM8992 vendor commits the pipe/mixer/INTF state before TG ON.
+	 * Full modesets have deferred that flush since atomic_flush().
+	 */
+	if (flush_before_enable) {
+		mdp5_ctl_commit(ctl, pipeline, mdp_ctl_flush_mask_encoder(intf), true);
+		wmb();
+		dev_info(&mdp5_kms->pdev->dev,
+			 "MSM8992 video start: committed flush=%#x before INTF%d timing engine (was %#x)\n",
+			 mdp5_ctl_get_commit_status(ctl), intfn,
+			 mdp5_read(mdp5_kms, REG_MDP5_INTF_TIMING_ENGINE_EN(intfn)));
+	}
+
 	spin_lock_irqsave(&mdp5_encoder->intf_lock, flags);
 	mdp5_write(mdp5_kms, REG_MDP5_INTF_TIMING_ENGINE_EN(intfn), 1);
 	spin_unlock_irqrestore(&mdp5_encoder->intf_lock, flags);
-	mdp5_ctl_commit(ctl, pipeline, mdp_ctl_flush_mask_encoder(intf), true);
+	if (!flush_before_enable)
+		mdp5_ctl_commit(ctl, pipeline, mdp_ctl_flush_mask_encoder(intf), true);
 
 	mdp5_ctl_set_encoder_state(ctl, pipeline, true);
 

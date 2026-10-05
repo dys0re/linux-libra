@@ -311,6 +311,14 @@ static const struct msm_dsi_cfg_handler dsi_cfg_handlers[] = {
 		&sm8650_dsi_cfg, &msm_dsi_6g_v2_host_ops},
 };
 
+const struct msm_dsi_config *msm_dsi_cfg_get_bootstrap(const struct device_node *np)
+{
+	if (of_device_is_compatible(np, "qcom,msm8992-dsi-ctrl"))
+		return &msm8992_dsi_cfg;
+
+	return NULL;
+}
+
 const struct msm_dsi_cfg_handler *msm_dsi_cfg_get(u32 major, u32 minor,
 					       const struct device_node *np)
 {

@@ -672,10 +672,35 @@ static int qcom_labibb_of_parse_cb(struct device_node *np,
 	return 0;
 }
 
+static int qcom_labibb_get_error_flags(struct regulator_dev *rdev,
+				     unsigned int *flags)
+{
+	struct labibb_regulator *vreg = rdev_get_drvdata(rdev);
+	unsigned int status;
+	int ret;
+
+	ret = regmap_read(vreg->regmap, vreg->base + REG_LABIBB_STATUS1,
+			  &status);
+	if (ret)
+		return ret;
+	*flags = 0;
+	if (status & LABIBB_STATUS1_SC_BIT)
+		*flags |= REGULATOR_ERROR_OVER_CURRENT;
+	if (!(status & LABIBB_STATUS1_VREG_OK_BIT)) {
+		ret = regulator_is_enabled_regmap(rdev);
+		if (ret < 0)
+			return ret;
+		if (ret)
+			*flags |= REGULATOR_ERROR_UNDER_VOLTAGE;
+	}
+	return 0;
+}
+
 static const struct regulator_ops qcom_labibb_ops = {
 	.enable			= regulator_enable_regmap,
 	.disable		= regulator_disable_regmap,
 	.is_enabled		= regulator_is_enabled_regmap,
+	.get_error_flags	= qcom_labibb_get_error_flags,
 	.set_voltage_sel	= regulator_set_voltage_sel_regmap,
 	.get_voltage_sel	= regulator_get_voltage_sel_regmap,
 	.list_voltage		= regulator_list_voltage_linear,

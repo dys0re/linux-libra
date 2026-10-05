@@ -205,6 +205,42 @@ static const struct dev_pm_ops dsi_pm_ops = {
 				pm_runtime_force_resume)
 };
 
+static ssize_t test_pattern_show(struct device *dev,
+				 struct device_attribute *attr, char *buf)
+{
+	struct msm_dsi *dsi = dev_get_drvdata(dev);
+
+	return sysfs_emit(buf, "%u\n", msm_dsi_host_get_test_pattern(dsi->host));
+}
+
+static ssize_t test_pattern_store(struct device *dev,
+				  struct device_attribute *attr,
+				  const char *buf, size_t count)
+{
+	struct msm_dsi *dsi = dev_get_drvdata(dev);
+	bool enable;
+	int ret;
+
+	ret = kstrtobool(buf, &enable);
+	if (ret)
+		return ret;
+	ret = msm_dsi_host_set_test_pattern(dsi->host, enable);
+	return ret ? ret : count;
+}
+static DEVICE_ATTR_RW(test_pattern);
+
+static umode_t dsi_test_visible(struct kobject *kobj, struct attribute *attr, int index)
+{
+	return of_machine_is_compatible("xiaomi,libra") ? attr->mode : 0;
+}
+
+static struct attribute *dsi_test_attrs[] = { &dev_attr_test_pattern.attr, NULL };
+static const struct attribute_group dsi_test_group = {
+	.attrs = dsi_test_attrs,
+	.is_visible = dsi_test_visible,
+};
+static const struct attribute_group *dsi_test_groups[] = { &dsi_test_group, NULL };
+
 static struct platform_driver dsi_driver = {
 	.probe = dsi_dev_probe,
 	.remove_new = dsi_dev_remove,
@@ -212,6 +248,7 @@ static struct platform_driver dsi_driver = {
 		.name = "msm_dsi",
 		.of_match_table = dt_match,
 		.pm = &dsi_pm_ops,
+		.dev_groups = dsi_test_groups,
 	},
 };
 
@@ -266,4 +303,3 @@ void msm_dsi_snapshot(struct msm_disp_state *disp_state, struct msm_dsi *msm_dsi
 	msm_dsi_host_snapshot(disp_state, msm_dsi->host);
 	msm_dsi_phy_snapshot(disp_state, msm_dsi->phy);
 }
-

@@ -41,6 +41,7 @@ struct mdp5_crtc {
 #define PENDING_CURSOR 0x1
 #define PENDING_FLIP   0x2
 	atomic_t pending;
+	atomic_t underrun_count;
 
 	/* for unref'ing cursor bo's after scanout completes: */
 	struct drm_flip_work unref_cursor_work;
@@ -1099,6 +1100,23 @@ mdp5_crtc_atomic_print_state(struct drm_printer *p,
 			   pipeline->r_mixer->name : "(null)");
 
 	drm_printf(p, "\tcmd_mode=%d\n", mdp5_cstate->cmd_mode);
+	drm_printf(p, "\tunderrun_count=%d\n",
+		   atomic_read(&to_mdp5_crtc(state->crtc)->underrun_count));
+
+	/* Observe a running video interface without waking a suspended device
+	 * or querying clock providers. The existing PM usage pins bus clocks.
+	 */
+	if (state->active && !mdp5_cstate->cmd_mode && pipeline->intf &&
+	    !mdp5_cfg_intf_is_virtual(pipeline->intf->type) &&
+	    pm_runtime_get_if_in_use(&mdp5_kms->pdev->dev) > 0) {
+		int intf = pipeline->intf->num;
+
+		drm_printf(p, "\tintf_frame_count=%u\n",
+			   mdp5_read(mdp5_kms, REG_MDP5_INTF_FRAME_COUNT(intf)));
+		drm_printf(p, "\tintf_line_count=%u\n",
+			   mdp5_read(mdp5_kms, REG_MDP5_INTF_LINE_COUNT(intf)));
+		pm_runtime_put(&mdp5_kms->pdev->dev);
+	}
 }
 
 static struct drm_crtc_state *
@@ -1203,7 +1221,10 @@ static void mdp5_crtc_err_irq(struct mdp_irq *irq, uint32_t irqstatus)
 {
 	struct mdp5_crtc *mdp5_crtc = container_of(irq, struct mdp5_crtc, err);
 
-	DBG("%s: error: %08x", mdp5_crtc->base.name, irqstatus);
+	if (irqstatus & mdp5_crtc->err.irqmask)
+		atomic_inc(&mdp5_crtc->underrun_count);
+	DBG("%s: error: %08x, underruns=%d", mdp5_crtc->base.name, irqstatus,
+	    atomic_read(&mdp5_crtc->underrun_count));
 }
 
 static void mdp5_crtc_pp_done_irq(struct mdp_irq *irq, uint32_t irqstatus)
@@ -1336,6 +1357,7 @@ struct drm_crtc *mdp5_crtc_init(struct drm_device *dev,
 	crtc = &mdp5_crtc->base;
 
 	mdp5_crtc->id = id;
+	atomic_set(&mdp5_crtc->underrun_count, 0);
 
 	spin_lock_init(&mdp5_crtc->lm_lock);
 	spin_lock_init(&mdp5_crtc->cursor.lock);

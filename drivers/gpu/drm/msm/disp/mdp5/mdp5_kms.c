@@ -7,6 +7,7 @@
 
 #include <linux/delay.h>
 #include <linux/interconnect.h>
+#include <linux/module.h>
 #include <linux/of_irq.h>
 
 #include <drm/drm_debugfs.h>
@@ -19,13 +20,45 @@
 #include "msm_mmu.h"
 #include "mdp5_kms.h"
 
+static unsigned long mdp5_core_clk_rate;
+module_param(mdp5_core_clk_rate, ulong, 0400);
+MODULE_PARM_DESC(mdp5_core_clk_rate, "Override MDP5 core clock Hz (0 uses hardware maximum)");
+
+static void mdp5_msm8992_restore_settings(struct mdp5_kms *mdp5_kms)
+{
+	struct device *dev = &mdp5_kms->pdev->dev;
+	/* Factory qcom,mdp-settings, translated from MDSS to MDP core offsets.
+	 * Includes panic/robust LUTs, bus configuration and clock controls.
+	 */
+	static const struct { u16 reg; u32 val; } settings[] = {
+		{ 0x17c, 0x0000ffff }, { 0x184, 0xc000ff00 },
+		{ 0x1e0, 0x000000a4 }, { 0x1e4, 0x00000000 },
+		{ 0x2ac, 0xc0000ccc }, { 0x2b4, 0xc0000ccc },
+		{ 0x2bc, 0x00cccccc }, { 0x2c4, 0x000000cc },
+		{ 0x3a8, 0x0cccc0c0 }, { 0x3b0, 0xccccc0c0 },
+		{ 0x3b8, 0xccccc0c0 }, { 0x3d0, 0x00ccc000 },
+	};
+	unsigned int i;
+
+	if (!of_device_is_compatible(dev->of_node, "qcom,msm8992-mdp5"))
+		return;
+
+	/* Reapply after collapse, with the parent SCM restore and clocks done. */
+	for (i = 0; i < ARRAY_SIZE(settings); i++)
+		mdp5_write(mdp5_kms, settings[i].reg, settings[i].val);
+	dev_info_once(dev, "MSM8992 MDP: restored 12 factory hardware settings\n");
+}
+
 static int mdp5_hw_init(struct msm_kms *kms)
 {
 	struct mdp5_kms *mdp5_kms = to_mdp5_kms(to_mdp_kms(kms));
 	struct device *dev = &mdp5_kms->pdev->dev;
 	unsigned long flags;
+	int ret;
 
-	pm_runtime_get_sync(dev);
+	ret = pm_runtime_resume_and_get(dev);
+	if (ret)
+		return ret;
 
 	/* Magic unknown register writes:
 	 *
@@ -233,6 +266,8 @@ static int mdp5_disable(struct mdp5_kms *mdp5_kms)
 {
 	DBG("");
 
+	if (!mdp5_kms->enable_count)
+		return 0;
 	mdp5_kms->enable_count--;
 	WARN_ON(mdp5_kms->enable_count < 0);
 
@@ -248,16 +283,24 @@ static int mdp5_disable(struct mdp5_kms *mdp5_kms)
 
 static int mdp5_enable(struct mdp5_kms *mdp5_kms)
 {
+	struct clk *clocks[] = {
+		mdp5_kms->ahb_clk, mdp5_kms->axi_clk, mdp5_kms->core_clk,
+		mdp5_kms->lut_clk, mdp5_kms->tbu_clk, mdp5_kms->tbu_rt_clk,
+	};
+	int ret, i;
+
 	DBG("");
 
+	for (i = 0; i < ARRAY_SIZE(clocks); i++) {
+		ret = clk_prepare_enable(clocks[i]);
+		if (ret) {
+			dev_err(&mdp5_kms->pdev->dev, "MDP5 clock %d enable failed: %d\n", i, ret);
+			while (--i >= 0)
+				clk_disable_unprepare(clocks[i]);
+			return ret;
+		}
+	}
 	mdp5_kms->enable_count++;
-
-	clk_prepare_enable(mdp5_kms->ahb_clk);
-	clk_prepare_enable(mdp5_kms->axi_clk);
-	clk_prepare_enable(mdp5_kms->core_clk);
-	clk_prepare_enable(mdp5_kms->lut_clk);
-	clk_prepare_enable(mdp5_kms->tbu_clk);
-	clk_prepare_enable(mdp5_kms->tbu_rt_clk);
 
 	return 0;
 }
@@ -458,13 +501,16 @@ fail:
 	return ret;
 }
 
-static void read_mdp_hw_revision(struct mdp5_kms *mdp5_kms,
+static int read_mdp_hw_revision(struct mdp5_kms *mdp5_kms,
 				 u32 *major, u32 *minor)
 {
 	struct device *dev = &mdp5_kms->pdev->dev;
 	u32 version;
+	int ret;
 
-	pm_runtime_get_sync(dev);
+	ret = pm_runtime_resume_and_get(dev);
+	if (ret)
+		return ret;
 	version = mdp5_read(mdp5_kms, REG_MDP5_HW_VERSION);
 	pm_runtime_put_sync(dev);
 
@@ -472,6 +518,7 @@ static void read_mdp_hw_revision(struct mdp5_kms *mdp5_kms,
 	*minor = FIELD(version, MDP5_HW_VERSION_MINOR);
 
 	DRM_DEV_INFO(dev, "MDP5 version v%d.%d", *major, *minor);
+	return 0;
 }
 
 static int get_clk(struct platform_device *pdev, struct clk **clkp,
@@ -523,7 +570,9 @@ static int mdp5_kms_init(struct drm_device *dev)
 	 * have left things on, in which case we'll start getting faults if
 	 * we don't disable):
 	 */
-	pm_runtime_get_sync(&pdev->dev);
+	ret = pm_runtime_resume_and_get(&pdev->dev);
+	if (ret)
+		goto fail;
 	for (i = 0; i < MDP5_INTF_NUM_MAX; i++) {
 		if (mdp5_cfg_intf_is_virtual(config->hw->intf.connect[i]) ||
 		    !config->hw->intf.base[i])
@@ -721,12 +770,16 @@ static int mdp5_init(struct platform_device *pdev, struct drm_device *dev)
 	 * rate first, then figure out hw revision, and then set a
 	 * more optimal rate:
 	 */
-	clk_set_rate(mdp5_kms->core_clk, 200000000);
+	ret = clk_set_rate(mdp5_kms->core_clk, 200000000);
+	if (ret)
+		goto fail;
 
 	pm_runtime_enable(&pdev->dev);
 	mdp5_kms->rpm_enabled = true;
 
-	read_mdp_hw_revision(mdp5_kms, &major, &minor);
+	ret = read_mdp_hw_revision(mdp5_kms, &major, &minor);
+	if (ret)
+		goto fail;
 
 	mdp5_kms->cfg = mdp5_cfg_init(mdp5_kms, major, minor);
 	if (IS_ERR(mdp5_kms->cfg)) {
@@ -739,7 +792,17 @@ static int mdp5_init(struct platform_device *pdev, struct drm_device *dev)
 	mdp5_kms->caps = config->hw->mdp.caps;
 
 	/* TODO: compute core clock rate at runtime */
-	clk_set_rate(mdp5_kms->core_clk, config->hw->max_clk);
+	if (mdp5_core_clk_rate > config->hw->max_clk) {
+		ret = -EINVAL;
+		goto fail;
+	}
+	ret = clk_set_rate(mdp5_kms->core_clk,
+			   mdp5_core_clk_rate ?: config->hw->max_clk);
+	if (ret)
+		goto fail;
+	if (mdp5_core_clk_rate)
+		dev_info(&pdev->dev, "MDP5 bring-up core clock: %lu Hz\n",
+			 clk_get_rate(mdp5_kms->core_clk));
 
 	/*
 	 * Some chipsets have a Shared Memory Pool (SMP), while others
@@ -886,10 +949,15 @@ static __maybe_unused int mdp5_runtime_resume(struct device *dev)
 	struct platform_device *pdev = to_platform_device(dev);
 	struct msm_drm_private *priv = platform_get_drvdata(pdev);
 	struct mdp5_kms *mdp5_kms = to_mdp5_kms(to_mdp_kms(priv->kms));
+	int ret;
 
 	DBG("");
 
-	return mdp5_enable(mdp5_kms);
+	ret = mdp5_enable(mdp5_kms);
+	if (ret)
+		return ret;
+	mdp5_msm8992_restore_settings(mdp5_kms);
+	return 0;
 }
 
 static const struct dev_pm_ops mdp5_pm_ops = {

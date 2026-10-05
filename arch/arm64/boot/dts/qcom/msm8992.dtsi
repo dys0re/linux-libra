@@ -28,8 +28,8 @@
 		reg-names = "mdss_phys", "vbif_phys";
 		power-domains = <&mmcc MDSS_GDSC>;
 		clocks = <&mmcc MDSS_AHB_CLK>, <&mmcc MDSS_AXI_CLK>,
-			 <&mmcc MDSS_VSYNC_CLK>;
-		clock-names = "iface", "bus", "vsync";
+			 <&mmcc MDSS_VSYNC_CLK>, <&mmcc MDSS_MDP_CLK>;
+		clock-names = "iface", "bus", "vsync", "core";
 		interrupts = <GIC_SPI 83 IRQ_TYPE_LEVEL_HIGH>;
 		interrupt-controller;
 		#interrupt-cells = <1>;

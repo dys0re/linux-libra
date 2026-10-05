@@ -14,19 +14,27 @@ mount -t debugfs debugfs /sys/kernel/debug
 mount -t pstore pstore /sys/fs/pstore
 hostname libra-test
 ip link set lo up
-printf '\nAlpine Mi 4C bring-up initrd [diagnostic v8: ACM + NCM, DRM test]\n'
+# Native DRM is a module and is never loaded by init. Retain simplefb output
+# until the user requests the handover over the already working ACM channel.
+
+# Start ACM before any screen output, DRM queries or status collection.
+(
+	while :; do
+		if [ -c /dev/ttyGS0 ]; then
+			setsid /sbin/getty -L -n -l /bin/sh 115200 ttyGS0 vt100
+		else
+			sleep 1
+		fi
+	done
+) < /dev/null > /run/libra-acm-getty.log 2>&1 &
+
+printf '\nAlpine Mi 4C bring-up initrd [diagnostic v34: normal preview without active-video DCS read]\n'
 printf 'RAM-only, unauthenticated test shell\n'
 
 # Run independently so a missing UDC cannot block the local diagnostic shell.
 # The helper checks each setup step and prints the actual failure, not just a
 # secondary "can't find device usb0" from an unconditional IP command.
 /usr/sbin/libra-usb-gadget 2>&1 | tee /run/libra-usb.log &
-
-# List DRM resources automatically on native-display test images.
-# Modesetting is interactive and must be requested over the serial console.
-if grep -q 'libra.drm_test=1' /proc/cmdline; then
-	(sleep 5; /usr/sbin/libra-drm-test scan) > /run/libra-drm-test.log 2>&1 &
-fi
 
 {
 	uname -a
@@ -52,18 +60,9 @@ cat /run/libra-status.txt
 dmesg > /run/boot-dmesg.txt
 
 printf '\nUSB serial (when bound): 115200 baud; see /run/libra-usb.log for USB state.\n'
-printf 'Display test: libra-drm-test scan; logs: /run/libra-drm/\n'
+printf 'After native driver loading: libra-drm-test scan; logs: /run/libra-drm/\n'
+printf 'Late DRM image: libra-drm-load bias|backlight|panel|release|msm, one stage at a time.\n'
 printf 'All changes disappear at reboot. No login password in this test image.\n'
-
-(
-	while :; do
-		if [ -c /dev/ttyGS0 ]; then
-			setsid /sbin/getty -L -n -l /bin/sh 115200 ttyGS0 vt100
-		else
-			sleep 1
-		fi
-	done
-) &
 
 # Keep PID 1 alive, including after the local diagnostic shell exits.
 trap ':' INT TERM HUP

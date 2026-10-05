@@ -84,6 +84,22 @@ static const struct clk_parent_data mmcc_xo_dsibyte[] = {
 	{ .fw_name = "dsi1pllbyte" },
 };
 
+/* Allow MSM8992's DSI provider to be registered after MMCC. */
+static const struct clk_parent_data mmcc_8992_xo_dsipll[] = {
+	{ .fw_name = "xo" },
+	{ .fw_name = "dsi0pll", .name = "dsi0pll" },
+	{ .fw_name = "dsi1pll" },
+};
+
+static const struct clk_parent_data mmcc_8992_xo_dsibyte[] = {
+	{ .fw_name = "xo" },
+	{ .fw_name = "dsi0pllbyte", .name = "dsi0pllbyte" },
+	{ .fw_name = "dsi1pllbyte" },
+};
+
+static struct clk_init_data byte0_8992_init;
+static struct clk_init_data pclk0_8992_init;
+
 static const struct pll_vco mmpll_p_vco[] = {
 	{ 250000000, 500000000, 3 },
 	{ 500000000, 1000000000, 2 },
@@ -2561,6 +2577,13 @@ static int mmcc_msm8994_probe(struct platform_device *pdev)
 	struct regmap *regmap;
 
 	if (of_device_is_compatible(pdev->dev.of_node, "qcom,mmcc-msm8992")) {
+		byte0_8992_init = *byte0_clk_src.clkr.hw.init;
+		byte0_8992_init.parent_data = mmcc_8992_xo_dsibyte;
+		byte0_clk_src.clkr.hw.init = &byte0_8992_init;
+		pclk0_8992_init = *pclk0_clk_src.clkr.hw.init;
+		pclk0_8992_init.parent_data = mmcc_8992_xo_dsipll;
+		pclk0_clk_src.clkr.hw.init = &pclk0_8992_init;
+
 		/* MSM8992 features less clocks and some have different freq tables */
 		mmcc_msm8994_desc.clks[CAMSS_JPEG_JPEG1_CLK] = NULL;
 		mmcc_msm8994_desc.clks[CAMSS_JPEG_JPEG2_CLK] = NULL;

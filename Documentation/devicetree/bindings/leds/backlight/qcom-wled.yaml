@@ -51,6 +51,62 @@ properties:
       enable content adaptive backlight control.
     type: boolean
 
+  qcom,fdbk-output:
+    description: |
+      WLED4 boost feedback source. Supplemental WLED4 properties request
+      complete initialization instead of relying on firmware setup.
+    enum: [ auto, wled1, wled2, wled3, wled4 ]
+
+  qcom,vref-mv:
+    description: Boost feedback reference voltage in millivolts.
+    $ref: /schemas/types.yaml#/definitions/uint32
+    minimum: 300
+    maximum: 675
+    multipleOf: 25
+    default: 350
+
+  qcom,boost-duty-ns:
+    description: |
+      Maximum boost duty timing in nanoseconds. The minimum 26 ns setting
+      uses register encoding zero; it is not a zero-duration request.
+    enum: [ 26, 52, 104, 156 ]
+    default: 104
+
+  qcom,mod-freq-khz:
+    description: Brightness modulator and accumulator clock frequency in kHz.
+    $ref: /schemas/types.yaml#/definitions/uint32
+    enum: [ 1200, 2400, 9600, 19200 ]
+    default: 9600
+
+  qcom,dim-mode:
+    description: Brightness dimming mode.
+    enum: [ analog, digital, hybrid ]
+    default: hybrid
+
+  qcom,hyb-thres:
+    description: |
+      Hybrid dimming threshold using the vendor's scaled threshold units.
+      Hardware encodes powers of two relative to the base value 78.
+    $ref: /schemas/types.yaml#/definitions/uint32
+    minimum: 78
+    maximum: 10000
+    default: 625
+
+  qcom,sync-dly-us:
+    description: Per-string synchronization delay in microseconds.
+    minimum: 0
+    maximum: 1400
+    multipleOf: 200
+    default: 400
+
+  qcom,en-phase-stag:
+    description: Enable phase staggering between strings.
+    type: boolean
+
+  qcom,en-9b-dim-res:
+    description: Use 9-bit dimming resolution; brightness is limited to 511.
+    type: boolean
+
   qcom,ext-gen:
     description: |
       use externally generated modulator signal to dim.
@@ -98,8 +154,6 @@ properties:
     description: |
       Over-voltage protection limit. This property is for WLED4 only.
     $ref: /schemas/types.yaml#/definitions/uint32
-    enum: [ 18100, 19600, 29600, 31100 ]
-    default: 29600
 
   qcom,num-strings:
     description: |
@@ -165,6 +219,31 @@ properties:
     enum: [ 0, 1, 2, 3 ]
 
 allOf:
+  - if:
+      properties:
+        compatible:
+          contains:
+            const: qcom,pmi8994-wled
+    then:
+      properties:
+        qcom,ovp-millivolt:
+          enum: [ 17800, 19400, 29500, 31000 ]
+          default: 29500
+    else:
+      properties:
+        qcom,fdbk-output: false
+        qcom,vref-mv: false
+        qcom,boost-duty-ns: false
+        qcom,mod-freq-khz: false
+        qcom,dim-mode: false
+        qcom,hyb-thres: false
+        qcom,sync-dly-us: false
+        qcom,en-phase-stag: false
+        qcom,en-9b-dim-res: false
+        qcom,ovp-millivolt:
+          enum: [ 18100, 19600, 29600, 31100 ]
+          default: 29600
+
   - if:
       properties:
         compatible:

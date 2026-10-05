@@ -552,19 +552,31 @@
 
 &pmi8994_wled {
 	status = "okay";
+	/* Linux controls brightness directly without a panel CABC PWM signal. */
+	/delete-property/ qcom,cabc;
 	default-brightness = <512>;
-	qcom,current-limit-microamp = <16000>;
-	qcom,current-boost-limit = <980>;
-	qcom,switching-freq = <800>;
-	qcom,ovp-millivolt = <29600>;
-	qcom,enabled-strings = <0 1 2 3>;
+	qcom,fdbk-output = "auto";
+	qcom,vref-mv = <350>;
+	/* The selected factory DT overrides the vendor's generic 104 ns default. */
+	qcom,boost-duty-ns = <26>;
+	qcom,mod-freq-khz = <9600>;
+	qcom,dim-mode = "hybrid";
+	qcom,hyb-thres = <625>;
+	qcom,sync-dly-us = <800>;
+	qcom,en-phase-stag;
+	qcom,current-limit-microamp = <20000>;
+	/* Vendor ILIM encoding: 980 / 280 = 3; WLED4 table entry 3 is 620. */
+	qcom,current-boost-limit = <620>;
+	qcom,switching-freq = <600>;
+	qcom,ovp-millivolt = <29500>;
+	qcom,enabled-strings = <0 1>;
 };
 
 &tlmm {
 	panel_reset_default: panel-reset-state {
 		pins = "gpio78";
 		function = "gpio";
-		drive-strength = <2>;
+		drive-strength = <8>;
 		bias-disable;
 	};
 };

@@ -5,6 +5,7 @@
 
 #include <linux/bitfield.h>
 #include <linux/clk.h>
+#include <linux/firmware/qcom/qcom_scm.h>
 #include <linux/delay.h>
 #include <linux/interconnect.h>
 #include <linux/irq.h>
@@ -38,6 +39,7 @@ struct msm_mdss {
 	struct clk_bulk_data *clocks;
 	size_t num_clocks;
 	bool is_mdp5;
+	bool restore_sec_cfg;
 	struct {
 		unsigned long enabled_mask;
 		struct irq_domain *domain;
@@ -301,6 +303,21 @@ static int msm_mdss_enable(struct msm_mdss *msm_mdss)
 		return ret;
 	}
 
+	/* MSM8992 loses MDSS register access configuration at power collapse.
+	 * The vendor restores device 1 with AHB, AXI and MDP clocks enabled.
+	 */
+	if (msm_mdss->restore_sec_cfg) {
+		if (!qcom_scm_restore_sec_cfg_available()) {
+			ret = -EOPNOTSUPP;
+			goto restore_failed;
+		}
+		dev_info(msm_mdss->dev, "MSM8992 MDSS: restoring secure configuration\n");
+		ret = qcom_scm_restore_sec_cfg(QCOM_SCM_MDSS_DEV_ID, 0);
+		if (ret)
+			goto restore_failed;
+		dev_info(msm_mdss->dev, "MSM8992 MDSS: secure configuration restored\n");
+	}
+
 	/*
 	 * Register access requires MDSS_MDP_CLK, which is not enabled by the
 	 * mdss on mdp5 hardware. Skip it for now.
@@ -341,6 +358,15 @@ static int msm_mdss_enable(struct msm_mdss *msm_mdss)
 	}
 
 	return ret;
+restore_failed:
+	dev_err(msm_mdss->dev, "MDSS secure configuration restore failed: %d\n", ret);
+	clk_bulk_disable_unprepare(msm_mdss->num_clocks, msm_mdss->clocks);
+	for (i = 0; i < msm_mdss->num_mdp_paths; i++)
+		icc_set_bw(msm_mdss->mdp_path[i], 0, 0);
+	if (msm_mdss->reg_bus_path)
+		icc_set_bw(msm_mdss->reg_bus_path, 0, 0);
+	/* Runtime PM callbacks must report firmware status failures negatively. */
+	return ret < 0 ? ret : -EIO;
 }
 
 static int msm_mdss_disable(struct msm_mdss *msm_mdss)
@@ -398,10 +424,11 @@ static int msm_mdss_reset(struct device *dev)
 }
 
 /*
- * MDP5 MDSS uses at most three specified clocks.
+ * MSM8992 also needs the MDP core clock for restoring secure configuration.
  */
-#define MDP5_MDSS_NUM_CLOCKS 3
-static int mdp5_mdss_parse_clock(struct platform_device *pdev, struct clk_bulk_data **clocks)
+#define MDP5_MDSS_NUM_CLOCKS 4
+static int mdp5_mdss_parse_clock(struct platform_device *pdev, struct clk_bulk_data **clocks,
+				bool restore_sec_cfg)
 {
 	struct clk_bulk_data *bulk;
 	int num_clocks = 0;
@@ -417,8 +444,13 @@ static int mdp5_mdss_parse_clock(struct platform_device *pdev, struct clk_bulk_d
 	bulk[num_clocks++].id = "iface";
 	bulk[num_clocks++].id = "bus";
 	bulk[num_clocks++].id = "vsync";
+	if (restore_sec_cfg)
+		bulk[num_clocks++].id = "core";
 
-	ret = devm_clk_bulk_get_optional(&pdev->dev, num_clocks, bulk);
+	if (restore_sec_cfg)
+		ret = devm_clk_bulk_get(&pdev->dev, num_clocks, bulk);
+	else
+		ret = devm_clk_bulk_get_optional(&pdev->dev, num_clocks, bulk);
 	if (ret)
 		return ret;
 
@@ -432,6 +464,10 @@ static struct msm_mdss *msm_mdss_init(struct platform_device *pdev, bool is_mdp5
 	struct msm_mdss *msm_mdss;
 	int ret;
 	int irq;
+	bool restore_sec_cfg = is_mdp5 && of_machine_is_compatible("qcom,msm8992");
+
+	if (restore_sec_cfg && !qcom_scm_is_available())
+		return ERR_PTR(-EPROBE_DEFER);
 
 	ret = msm_mdss_reset(&pdev->dev);
 	if (ret)
@@ -442,6 +478,7 @@ static struct msm_mdss *msm_mdss_init(struct platform_device *pdev, bool is_mdp5
 		return ERR_PTR(-ENOMEM);
 
 	msm_mdss->mdss_data = of_device_get_match_data(&pdev->dev);
+	msm_mdss->restore_sec_cfg = restore_sec_cfg;
 
 	msm_mdss->mmio = devm_platform_ioremap_resource_byname(pdev, is_mdp5 ? "mdss_phys" : "mdss");
 	if (IS_ERR(msm_mdss->mmio))
@@ -454,7 +491,7 @@ static struct msm_mdss *msm_mdss_init(struct platform_device *pdev, bool is_mdp5
 		return ERR_PTR(ret);
 
 	if (is_mdp5)
-		ret = mdp5_mdss_parse_clock(pdev, &msm_mdss->clocks);
+		ret = mdp5_mdss_parse_clock(pdev, &msm_mdss->clocks, restore_sec_cfg);
 	else
 		ret = devm_clk_bulk_get_all(&pdev->dev, &msm_mdss->clocks);
 	if (ret < 0) {

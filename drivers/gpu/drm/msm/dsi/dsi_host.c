@@ -176,6 +176,7 @@ struct msm_dsi_host {
 	bool registered;
 	bool power_on;
 	bool enabled;
+	bool test_pattern;
 	int irq;
 };
 
@@ -189,14 +190,68 @@ static inline void dsi_write(struct msm_dsi_host *msm_host, u32 reg, u32 data)
 	writel(data, msm_host->ctrl_base + reg);
 }
 
+static const struct msm_dsi_cfg_handler *dsi_get_config_8992(
+		struct msm_dsi_host *msm_host, const struct msm_dsi_config *bootstrap)
+{
+	struct device *dev = &msm_host->pdev->dev;
+	struct clk_bulk_data clocks[DSI_BUS_CLK_MAX] = {};
+	const struct msm_dsi_cfg_handler *cfg_hnd = NULL;
+	u32 minor;
+	int ret, i;
+
+	if (bootstrap->num_bus_clks < 1 || bootstrap->num_bus_clks > DSI_BUS_CLK_MAX)
+		return ERR_PTR(-EINVAL);
+	for (i = 0; i < bootstrap->num_bus_clks; i++)
+		clocks[i].id = bootstrap->bus_clk_names[i];
+	ret = devm_clk_bulk_get(dev, bootstrap->num_bus_clks, clocks);
+	if (ret)
+		return ERR_PTR(ret);
+	ret = devm_regulator_bulk_get_const(dev, bootstrap->num_regulators,
+			bootstrap->regulator_data, &msm_host->supplies);
+	if (ret)
+		return ERR_PTR(ret);
+
+	ret = pm_runtime_resume_and_get(dev);
+	if (ret)
+		return ERR_PTR(ret);
+	ret = regulator_bulk_enable(bootstrap->num_regulators, msm_host->supplies);
+	if (ret)
+		goto runtime_put;
+	dev_info(dev, "MSM8992 DSI host: enabling version-read bus clocks\n");
+	ret = clk_bulk_prepare_enable(bootstrap->num_bus_clks, clocks);
+	if (ret)
+		goto supplies_off;
+
+	/* This compatible is DSI6G. Follow the vendor's HW revision read;
+	 * do not probe the legacy/scratch VERSION address at offset 0x1f0.
+	 */
+	dev_info(dev, "MSM8992 DSI host: reading HW revision at offset 0\n");
+	minor = readl(msm_host->ctrl_base + REG_DSI_6G_HW_VERSION);
+	dev_info(dev, "MSM8992 DSI host: HW revision %#x\n", minor);
+	cfg_hnd = msm_dsi_cfg_get(MSM_DSI_VER_MAJOR_6G, minor, dev->of_node);
+	ret = cfg_hnd && cfg_hnd->cfg == bootstrap ? 0 : -EINVAL;
+
+	clk_bulk_disable_unprepare(bootstrap->num_bus_clks, clocks);
+supplies_off:
+	regulator_bulk_disable(bootstrap->num_regulators, msm_host->supplies);
+runtime_put:
+	pm_runtime_put_sync(dev);
+	return ret ? ERR_PTR(ret) : cfg_hnd;
+}
+
 static const struct msm_dsi_cfg_handler *dsi_get_config(
 						struct msm_dsi_host *msm_host)
 {
 	const struct msm_dsi_cfg_handler *cfg_hnd = NULL;
+	const struct msm_dsi_config *bootstrap;
 	struct device *dev = &msm_host->pdev->dev;
 	struct clk *ahb_clk;
 	int ret;
 	u32 major = 0, minor = 0;
+
+	bootstrap = msm_dsi_cfg_get_bootstrap(dev->of_node);
+	if (bootstrap)
+		return dsi_get_config_8992(msm_host, bootstrap);
 
 	ahb_clk = msm_clk_get(msm_host->pdev, "iface");
 	if (IS_ERR(ahb_clk)) {
@@ -868,6 +923,11 @@ static void dsi_ctrl_enable(struct msm_dsi_host *msm_host,
 
 		dsi_write(msm_host, REG_DSI_LANE_CTRL,
 			lane_ctrl | DSI_LANE_CTRL_CLKLN_HS_FORCE_REQUEST);
+	} else if (of_machine_is_compatible("xiaomi,libra")) {
+		/* Match the factory LP11 startup, including firmware handover. */
+		lane_ctrl = dsi_read(msm_host, REG_DSI_LANE_CTRL);
+		dsi_write(msm_host, REG_DSI_LANE_CTRL,
+			  lane_ctrl & ~DSI_LANE_CTRL_CLKLN_HS_FORCE_REQUEST);
 	}
 
 	data |= DSI_CTRL_ENABLE;
@@ -1551,6 +1611,8 @@ static void dsi_timeout_status(struct msm_dsi_host *msm_host)
 	status = dsi_read(msm_host, REG_DSI_TIMEOUT_STATUS);
 
 	if (status) {
+		dev_err_ratelimited(&msm_host->pdev->dev,
+				    "DSI timeout status=%#x\n", status);
 		dsi_write(msm_host, REG_DSI_TIMEOUT_STATUS, status);
 		msm_host->err_work_state |= DSI_ERR_STATE_TIMEOUT;
 	}
@@ -1580,6 +1642,8 @@ static void dsi_fifo_status(struct msm_dsi_host *msm_host)
 
 	/* fifo underflow, overflow */
 	if (status) {
+		dev_err_ratelimited(&msm_host->pdev->dev,
+				    "DSI FIFO status=%#x\n", status);
 		dsi_write(msm_host, REG_DSI_FIFO_STATUS, status);
 		msm_host->err_work_state |= DSI_ERR_STATE_FIFO;
 		if (status & DSI_FIFO_STATUS_CMD_MDP_FIFO_UNDERFLOW)
@@ -1699,13 +1763,18 @@ static ssize_t dsi_host_transfer(struct mipi_dsi_host *host,
 	struct msm_dsi_host *msm_host = to_msm_dsi_host(host);
 	int ret;
 
-	if (!msg || !msm_host->power_on)
-		return -EINVAL;
+	/* Keep panel diagnostic reads serialized with host disable/power-off. */
+	mutex_lock(&msm_host->dev_mutex);
+	if (!msg || !msm_host->power_on) {
+		ret = -EINVAL;
+		goto out;
+	}
 
 	mutex_lock(&msm_host->cmd_mutex);
 	ret = msm_dsi_manager_cmd_xfer(msm_host->id, msg);
 	mutex_unlock(&msm_host->cmd_mutex);
-
+out:
+	mutex_unlock(&msm_host->dev_mutex);
 	return ret;
 }
 
@@ -1917,6 +1986,7 @@ int msm_dsi_host_init(struct msm_dsi *msm_dsi)
 	struct msm_dsi_host *msm_host = NULL;
 	struct platform_device *pdev = msm_dsi->pdev;
 	const struct msm_dsi_config *cfg;
+	const struct msm_dsi_cfg_handler *cfg_hnd;
 	int ret;
 
 	msm_host = devm_kzalloc(&pdev->dev, sizeof(*msm_host), GFP_KERNEL);
@@ -1926,6 +1996,9 @@ int msm_dsi_host_init(struct msm_dsi *msm_dsi)
 
 	msm_host->pdev = pdev;
 	msm_dsi->host = &msm_host->base;
+	mutex_init(&msm_host->dev_mutex);
+	mutex_init(&msm_host->cmd_mutex);
+	spin_lock_init(&msm_host->intr_lock);
 
 	ret = dsi_host_parse_dt(msm_host);
 	if (ret) {
@@ -1941,11 +2014,15 @@ int msm_dsi_host_init(struct msm_dsi *msm_dsi)
 
 	pm_runtime_enable(&pdev->dev);
 
-	msm_host->cfg_hnd = dsi_get_config(msm_host);
-	if (!msm_host->cfg_hnd) {
+	cfg_hnd = dsi_get_config(msm_host);
+	if (IS_ERR(cfg_hnd))
+		return dev_err_probe(&pdev->dev, PTR_ERR(cfg_hnd),
+				     "DSI version probe resources failed\n");
+	if (!cfg_hnd) {
 		pr_err("%s: get config failed\n", __func__);
 		return -EINVAL;
 	}
+	msm_host->cfg_hnd = cfg_hnd;
 	cfg = msm_host->cfg_hnd->cfg;
 
 	msm_host->id = dsi_host_get_id(msm_host);
@@ -1958,11 +2035,14 @@ int msm_dsi_host_init(struct msm_dsi *msm_dsi)
 	msm_host->ctrl_base += cfg->io_offset;
 	msm_host->ctrl_size -= cfg->io_offset;
 
-	ret = devm_regulator_bulk_get_const(&pdev->dev, cfg->num_regulators,
-					    cfg->regulator_data,
-					    &msm_host->supplies);
-	if (ret)
-		return ret;
+	/* MSM8992 already acquired the same supplies before its version read. */
+	if (!msm_host->supplies) {
+		ret = devm_regulator_bulk_get_const(&pdev->dev, cfg->num_regulators,
+						  cfg->regulator_data,
+						  &msm_host->supplies);
+		if (ret)
+			return ret;
+	}
 
 	ret = dsi_clk_init(msm_host);
 	if (ret) {
@@ -2004,9 +2084,6 @@ int msm_dsi_host_init(struct msm_dsi *msm_dsi)
 
 	init_completion(&msm_host->dma_comp);
 	init_completion(&msm_host->video_comp);
-	mutex_init(&msm_host->dev_mutex);
-	mutex_init(&msm_host->cmd_mutex);
-	spin_lock_init(&msm_host->intr_lock);
 
 	/* setup workqueue */
 	msm_host->workqueue = alloc_ordered_workqueue("dsi_drm_work", 0);
@@ -2373,6 +2450,7 @@ int msm_dsi_host_enable(struct mipi_dsi_host *host)
 {
 	struct msm_dsi_host *msm_host = to_msm_dsi_host(host);
 
+	mutex_lock(&msm_host->dev_mutex);
 	dsi_op_mode_config(msm_host,
 		!!(msm_host->mode_flags & MIPI_DSI_MODE_VIDEO), true);
 
@@ -2386,6 +2464,7 @@ int msm_dsi_host_enable(struct mipi_dsi_host *host)
 	 * }
 	 */
 	msm_host->enabled = true;
+	mutex_unlock(&msm_host->dev_mutex);
 	return 0;
 }
 
@@ -2393,7 +2472,12 @@ int msm_dsi_host_disable(struct mipi_dsi_host *host)
 {
 	struct msm_dsi_host *msm_host = to_msm_dsi_host(host);
 
+	mutex_lock(&msm_host->dev_mutex);
 	msm_host->enabled = false;
+	if (msm_host->power_on && msm_host->test_pattern)
+		dsi_write(msm_host, REG_DSI_TEST_PATTERN_GEN_CTRL,
+			  dsi_read(msm_host, REG_DSI_TEST_PATTERN_GEN_CTRL) & ~DSI_TEST_PATTERN_GEN_CTRL_EN);
+	msm_host->test_pattern = false;
 	dsi_op_mode_config(msm_host,
 		!!(msm_host->mode_flags & MIPI_DSI_MODE_VIDEO), false);
 
@@ -2402,6 +2486,8 @@ int msm_dsi_host_disable(struct mipi_dsi_host *host)
 	 * Reset to disable video engine so that we can send off cmd.
 	 */
 	dsi_sw_reset(msm_host);
+	msm_host->test_pattern = false;
+	mutex_unlock(&msm_host->dev_mutex);
 
 	return 0;
 }
@@ -2497,6 +2583,12 @@ int msm_dsi_host_power_off(struct mipi_dsi_host *host)
 		goto unlock_ret;
 	}
 
+	if (msm_host->test_pattern) {
+		dsi_write(msm_host, REG_DSI_TEST_PATTERN_GEN_CTRL,
+			  dsi_read(msm_host, REG_DSI_TEST_PATTERN_GEN_CTRL) &
+			  ~DSI_TEST_PATTERN_GEN_CTRL_EN);
+		msm_host->test_pattern = false;
+	}
 	dsi_ctrl_disable(msm_host);
 
 	pinctrl_pm_select_sleep_state(&msm_host->pdev->dev);
@@ -2639,6 +2731,57 @@ void msm_dsi_host_test_pattern_en(struct mipi_dsi_host *host)
 	if (!is_video_mode)
 		dsi_write(msm_host, REG_DSI_TEST_PATTERN_GEN_CMD_STREAM0_TRIGGER,
 				DSI_TEST_PATTERN_GEN_CMD_STREAM0_TRIGGER_SW_TRIGGER);
+	msm_host->test_pattern = true;
+}
+
+int msm_dsi_host_set_test_pattern(struct mipi_dsi_host *host, bool enable)
+{
+	struct msm_dsi_host *msm_host = to_msm_dsi_host(host);
+	u32 ctrl;
+	int ret = 0;
+
+	mutex_lock(&msm_host->dev_mutex);
+	if (!msm_host->power_on || !msm_host->enabled) {
+		if (enable)
+			ret = -EPIPE;
+		else
+			msm_host->test_pattern = false;
+		goto out;
+	}
+	if (!(msm_host->mode_flags & MIPI_DSI_MODE_VIDEO)) {
+		ret = -EOPNOTSUPP;
+		goto out;
+	}
+	mutex_lock(&msm_host->cmd_mutex);
+	if (enable)
+		msm_dsi_host_test_pattern_en(host);
+	else {
+		ctrl = dsi_read(msm_host, REG_DSI_TEST_PATTERN_GEN_CTRL);
+		dsi_write(msm_host, REG_DSI_TEST_PATTERN_GEN_CTRL,
+			  ctrl & ~DSI_TEST_PATTERN_GEN_CTRL_EN);
+		msm_host->test_pattern = false;
+	}
+	ctrl = dsi_read(msm_host, REG_DSI_TEST_PATTERN_GEN_CTRL);
+	msm_host->test_pattern = !!(ctrl & DSI_TEST_PATTERN_GEN_CTRL_EN);
+	if (!!(ctrl & DSI_TEST_PATTERN_GEN_CTRL_EN) != enable)
+		ret = -EIO;
+	dev_info(&msm_host->pdev->dev, "DSI host checkerboard: enabled=%u ctrl=%#x\n",
+		 enable, ctrl);
+	mutex_unlock(&msm_host->cmd_mutex);
+out:
+	mutex_unlock(&msm_host->dev_mutex);
+	return ret;
+}
+
+bool msm_dsi_host_get_test_pattern(struct mipi_dsi_host *host)
+{
+	struct msm_dsi_host *msm_host = to_msm_dsi_host(host);
+	bool enabled;
+
+	mutex_lock(&msm_host->dev_mutex);
+	enabled = msm_host->test_pattern;
+	mutex_unlock(&msm_host->dev_mutex);
+	return enabled;
 }
 
 struct drm_dsc_config *msm_dsi_host_get_dsc_config(struct mipi_dsi_host *host)
