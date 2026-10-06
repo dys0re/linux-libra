@@ -40,6 +40,9 @@
 #define REG_LABIBB_ENABLE_CTL		0x46
  #define LABIBB_CONTROL_ENABLE		BIT(7)
 
+#define REG_LAB_IBB_EN_RDY		0x49
+ #define LAB_IBB_EN_RDY_EN		BIT(7)
+
 #define REG_LABIBB_PD_CTL		0x47
  #define LAB_PD_CTL_MASK		GENMASK(1, 0)
  #define IBB_PD_CTL_MASK		(BIT(0) | BIT(7))
@@ -89,6 +92,7 @@ struct labibb_regulator {
 	struct delayed_work		sc_recovery_work;
 	u16				base;
 	u8				type;
+	bool				coupled;
 	u8				dischg_sel;
 	u8				soft_start_sel;
 	int				sc_irq;
@@ -476,7 +480,8 @@ static void qcom_labibb_sc_recovery_worker(struct work_struct *work)
 			vreg->fatal_count++;
 			goto reschedule;
 		}
-		val = lab_val & ibb_val;
+		/* Coupled PMI8994 LCD outputs use IBB's common enable command. */
+		val = vreg->coupled ? ibb_val : lab_val & ibb_val;
 
 		if (!(val & LABIBB_CONTROL_ENABLE)) {
 			pbs_cut = true;
@@ -784,6 +789,30 @@ static const struct of_device_id qcom_labibb_match[] = {
 };
 MODULE_DEVICE_TABLE(of, qcom_labibb_match);
 
+static int qcom_labibb_read_coupling(struct regmap *regmap, bool *coupled)
+{
+	unsigned int ready;
+	int ret;
+
+	ret = regmap_read(regmap, PMI8998_LAB_REG_BASE + REG_LAB_IBB_EN_RDY, &ready);
+	if (ret)
+		return ret;
+
+	*coupled = !!(ready & LAB_IBB_EN_RDY_EN);
+	return 0;
+}
+
+static void qcom_labibb_configure_enable(struct labibb_regulator *vreg, bool coupled)
+{
+	vreg->coupled = coupled;
+	if (coupled && vreg->type == QCOM_LAB_TYPE) {
+		/* OEM LCD mode enables/disables both rails through IBB, not LAB. */
+		vreg->desc.enable_reg = PMI8998_IBB_REG_BASE + REG_LABIBB_ENABLE_CTL;
+		vreg->desc.enable_mask = IBB_ENABLE_CTL_MASK;
+		vreg->desc.enable_time = IBB_ENABLE_TIME;
+	}
+}
+
 static int qcom_labibb_regulator_probe(struct platform_device *pdev)
 {
 	struct labibb_regulator *vreg;
@@ -793,6 +822,7 @@ static int qcom_labibb_regulator_probe(struct platform_device *pdev)
 	const struct labibb_regulator_data *reg_data;
 	struct regmap *reg_regmap;
 	unsigned int type;
+	bool coupled = false;
 	int ret;
 
 	reg_regmap = dev_get_regmap(pdev->dev.parent, NULL);
@@ -804,6 +834,11 @@ static int qcom_labibb_regulator_probe(struct platform_device *pdev)
 	reg_data = device_get_match_data(&pdev->dev);
 	if (!reg_data)
 		return -ENODEV;
+	if (of_device_is_compatible(dev->of_node, "qcom,pmi8994-lab-ibb")) {
+		ret = qcom_labibb_read_coupling(reg_regmap, &coupled);
+		if (ret)
+			return dev_err_probe(dev, ret, "PMI8994 coupling read failed\n");
+	}
 
 	for (; reg_data->name; reg_data++) {
 		char *sc_irq_name;
@@ -899,6 +934,7 @@ static int qcom_labibb_regulator_probe(struct platform_device *pdev)
 		}
 
 		memcpy(&vreg->desc, reg_data->desc, sizeof(vreg->desc));
+		qcom_labibb_configure_enable(vreg, coupled);
 		vreg->desc.of_match = reg_data->name;
 		vreg->desc.name = reg_data->name;
 

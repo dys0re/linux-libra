@@ -359,6 +359,13 @@ xsi:schemaLocation="https://gitlab.freedesktop.org/freedreno/ rules-fd.xsd">
 		<bitfield name="COUNT" low="16" high="23" type="uint"/>
 		<bitfield name="CLR" pos="0" type="boolean"/>
 	</reg32>
+	<!-- MSM8992 DSI6G: add io_offset (4) for the physical register offset. -->
+	<reg32 offset="0x001e0" name="TIMING_FLUSH">
+		<bitfield name="FLUSH" pos="0" type="boolean"/>
+	</reg32>
+	<reg32 offset="0x001e4" name="TIMING_DB_MODE">
+		<bitfield name="ENABLE" pos="0" type="boolean"/>
+	</reg32>
 	<reg32 offset="0x001f0" name="VERSION">
 		<bitfield name="MAJOR" low="24" high="31" type="uint"/>
 	</reg32>

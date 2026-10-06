@@ -16,7 +16,7 @@ def align(value, size):
     return (value + size - 1) // size * size
 
 
-def check_dtb(path, native, late=False):
+def check_dtb(path):
     def prop(node, name, kind="x"):
         value = subprocess.check_output(
             ["fdtget", "-t", kind, str(path), node, name], text=True).strip()
@@ -25,18 +25,27 @@ def check_dtb(path, native, late=False):
     mdss = "/soc/display-subsystem@fd900000"
     phy = mdss + "/phy@fd994300"
     clocks = prop("/soc/clock-controller@fd8c0000", "clocks")
-    phy_handle = prop(phy, "phandle")[0]
     # The first four MMCC parents are XO (zero cells), GCC and two RPM clocks.
-    expected = [phy_handle, 1, phy_handle, 0, 0, 0, 0] if native and not late else [0] * 5
+    expected = [0] * 5
     assert clocks[7:] == expected, "missing MMCC byte/pixel PLL parent wiring"
-    assert prop(mdss, "status", "s") == ("okay" if native else "disabled")
+    assert prop(mdss, "status", "s") == "okay"
     assert prop(mdss, "clock-names", "s") == "iface bus vsync core", "missing SCM restore core clock"
-    assert prop(phy, "status", "s") == ("okay" if native else "disabled")
-    assert prop("/chosen/framebuffer@3400000", "status", "s") == (
-        "disabled" if native and not late else "okay")
+    assert prop(phy, "status", "s") == "okay"
+    children = subprocess.check_output(["fdtget", "-l", str(path), "/chosen"], text=True).splitlines()
+    assert "framebuffer@3400000" in children, "missing simpledrm firmware framebuffer"
+    firmware = "/chosen/framebuffer@3400000"
+    assert prop(firmware, "status", "s") == "okay"
+    assert prop(firmware, "compatible", "s") == "simple-framebuffer"
+    assert prop(firmware, "reg") == [0, 0x3400000, 0, 1080 * 1920 * 3]
+    assert prop(firmware, "width") == [1080] and prop(firmware, "height") == [1920]
+    assert prop(firmware, "stride") == [1080 * 3]
+    assert prop(firmware, "format", "s") == "r8g8b8"
+    mmcc = prop("/soc/clock-controller@fd8c0000", "phandle")[0]
+    assert prop(firmware, "clocks") == sum(([mmcc, index] for index in (20, 106, 23, 110, 24, 21, 26)), [])
+    assert prop(firmware, "power-domains") == [mmcc, 5]
     for node in ("/soc/spmi@fc4cf000/pmic@3/labibb",
                  "/soc/spmi@fc4cf000/pmic@3/wled@d800"):
-        assert prop(node, "status", "s") == ("okay" if native else "disabled")
+        assert prop(node, "status", "s") == "okay"
     backlight = "/soc/spmi@fc4cf000/pmic@3/wled@d800"
     for name, value in (("qcom,current-boost-limit", [620]),
                         ("qcom,current-limit-microamp", [20000]),
@@ -51,7 +60,7 @@ def check_dtb(path, native, late=False):
         assert prop(backlight, name) == value, f"WLED setting mismatch: {name}"
     assert prop(backlight, "qcom,fdbk-output", "s") == "auto"
     assert prop(backlight, "qcom,dim-mode", "s") == "hybrid"
-    assert prop(backlight, "default-brightness") == ([0] if late else [512]), "unsafe probe-test backlight default"
+    assert prop(backlight, "default-brightness") == [0], "unsafe probe-test backlight default"
     names = subprocess.check_output(["fdtget", "-p", str(path), backlight], text=True).splitlines()
     assert "qcom,en-phase-stag" in names, "missing factory phase staggering"
     assert "qcom,num-strings" not in names, "redundant WLED string configuration"
@@ -106,7 +115,7 @@ def check_ramdisk(blob):
     assert busybox[:5] == b"\x7fELF\x02" and struct.unpack_from("<H", busybox, 18)[0] == 183
     for required in ("sbin/apk", "sbin/openrc", "sbin/getty", "usr/bin/setsid", "usr/bin/modetest",
                      "usr/sbin/libra-usb-gadget", "usr/sbin/libra-drm-test",
-                     "usr/sbin/libra-drm-load", "usr/sbin/libra-kmsg", "sbin/modprobe"):
+                     "usr/sbin/libra-drm-load", "usr/sbin/libra-drm-console", "usr/sbin/libra-kmsg", "sbin/modprobe"):
         assert required in entries, f"missing {required}"
     assert b"mount -t configfs" in entries["init"][3]
     assert b"setsid /sbin/getty -L -n -l /bin/sh 115200 tty1 linux" in entries["init"][3]
@@ -122,6 +131,11 @@ def check_ramdisk(blob):
     loader = entries["usr/sbin/libra-drm-load"]
     assert loader[0] & 0o111
     assert loader[3] == (WORKSPACE / "scripts/alpine-drm-load.sh").read_bytes(), "stale DRM loader"
+    console = entries["usr/sbin/libra-drm-console"]
+    assert console[0] & 0o111
+    assert console[3] == (WORKSPACE / "scripts/alpine-drm-console.sh").read_bytes(), "stale native console helper"
+    assert b"libra-usb-ready" in console[3], "native display may precede USB setup"
+    assert b"libra.drm_auto=1" in entries["init"][3], "missing native console boot selection"
     reader = entries["usr/sbin/libra-kmsg"]
     assert reader[0] & 0o111
     assert reader[3] == (BUILD / "libra-kmsg").read_bytes(), "stale log reader"
@@ -165,7 +179,7 @@ def check_boot(path, stock_header):
         assert entry[8] % page == 0 and entry[9] % page == 0
         dtb = table[entry[8]:entry[8] + entry[9]]
         assert dtb[:4] == b"\xd0\x0d\xfe\xed"
-        variant = "msm8992-xiaomi-libra" + ("-drm-late" if "-drm" in path.name else "-simplefb")
+        variant = "msm8992-xiaomi-libra"
         expected = (BUILD / f"libra/arch/arm64/boot/dts/qcom/{variant}.dtb").read_bytes()
         assert dtb[:len(expected)] == expected, "stale or mismatched DTB"
     digest = hashlib.sha1()
@@ -180,32 +194,35 @@ def check_boot(path, stock_header):
     assert skip_scaling in ("0", "1"), "RPM_SKIP_SCALING must be 0 or 1"
     assert f"clk_smd_rpm.skip_scaling={skip_scaling}".encode() in cmdline.split(), "RPM scaling mode mismatch"
     assert b"maxcpus=1" not in cmdline, "unexpected single-core limit"
-    native = "-drm" in path.name
-    assert b"libra.drm_test=1" not in cmdline, "unexpected automatic DRM scan"
-    for option in (b"libra.drm_late=1", b"msm.fbdev=0", b"msm.mdp5_core_clk_rate=200000000", b"drm.debug=0x6",
-                   b"log_buf_len=2M", b"loglevel=4", b"clk_ignore_unused",
-                   b"pd_ignore_unused"):
-        assert (option in cmdline.split()) == native, f"DRM diagnostic option mismatch: {option}"
-    assert (b"ignore_loglevel" in cmdline.split()) == (not native)
+    auto = os.environ.get("DRM_AUTO", "1")
+    assert auto in ("0", "1"), "DRM_AUTO must be 0 or 1"
+    assert f"libra.drm_auto={auto}".encode() in cmdline.split()
+    assert f"msm.fbdev={auto}".encode() in cmdline.split()
+    assert b"libra.drm_late=1" not in cmdline.split()
+    for option in (b"libra.drm_native=1", b"msm.mdp5_core_clk_rate=200000000",
+                   b"log_buf_len=2M", b"loglevel=4", b"clk_ignore_unused", b"pd_ignore_unused"):
+        assert option in cmdline.split(), f"Native display option missing: {option}"
+    assert not any(option.startswith(b"drm.debug=") for option in cmdline.split()), "bring-up DRM trace enabled"
+    assert b"ignore_loglevel" not in cmdline.split()
     print(f"{path.name}: factory header, payloads, QCDT selectors, SHA-1 ID OK")
 
 
 def main():
     stock = (WORKSPACE / "libra_images_6.1.7_20151221.0000.11_5.1_cn/images/boot.img").read_bytes()
     stock_header = struct.unpack_from("<10I", stock, 8)
-    for native in (False, True):
-        name = "msm8992-xiaomi-libra" + ("" if native else "-simplefb")
-        check_dtb(BUILD / f"libra/arch/arm64/boot/dts/qcom/{name}.dtb", native)
-    check_dtb(BUILD / "libra/arch/arm64/boot/dts/qcom/msm8992-xiaomi-libra-drm-late.dtb", True, late=True)
+    check_dtb(BUILD / "libra/arch/arm64/boot/dts/qcom/msm8992-xiaomi-libra.dtb")
     config = (BUILD / "libra/.config").read_text().splitlines()
     assert "CONFIG_PROC_SYSCTL=y" in config, "missing kernel taint diagnostics"
     assert "CONFIG_BUG=y" in config, "missing clock WARN diagnostics"
     for option in ("CONFIG_DRM_MSM=m", "CONFIG_DRM_PANEL_SHARP_LIBRA_RSP61322=m",
                    "CONFIG_REGULATOR_QCOM_LABIBB=m", "CONFIG_BACKLIGHT_QCOM_WLED=m"):
         assert option in config, f"native-display driver is not deferred: {option}"
+    for option in ("CONFIG_DRM_SIMPLEDRM=y", "CONFIG_DRM_FBDEV_EMULATION=y",
+                   "CONFIG_FRAMEBUFFER_CONSOLE=y", "CONFIG_FB_DEVICE=y"):
+        assert option in config, f"native framebuffer-console configuration mismatch: {option}"
+    assert not any(line in config for line in ("CONFIG_FB_SIMPLE=y", "CONFIG_FB_SIMPLE=m")), "legacy simplefb enabled"
     check_ramdisk((BUILD / "alpine-libra-initrd.cpio.gz").read_bytes())
-    for variant in ("simplefb", "drm"):
-        check_boot(BUILD / f"boot-libra-alpine-{variant}.img", stock_header)
+    check_boot(BUILD / "boot-libra-alpine-drm.img", stock_header)
 
 
 if __name__ == "__main__":

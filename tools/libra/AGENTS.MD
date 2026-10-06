@@ -16,3 +16,9 @@
 ## 操作本机的规范
 
 - 这是wsl环境，可以直接sudo
+
+## boot 镜像命名规范
+
+- 默认构建输出和提供给用户的镜像固定为 `build/boot-libra-alpine-drm.img`，新版本覆盖同名文件。
+- 用户的启动命令保持 `fastboot boot boot-libra-alpine-drm.img`，不要要求用户随版本修改文件名。
+- 带版本号的镜像只用于内部归档或回退；正常交付链接指向固定名称。

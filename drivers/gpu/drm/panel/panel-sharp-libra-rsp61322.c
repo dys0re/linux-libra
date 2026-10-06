@@ -21,7 +21,12 @@ struct libra_panel {
 	struct regulator_bulk_data supplies[2];
 	struct gpio_desc *reset;
 	struct gpio_desc *enable;
+	bool firmware_prepared;
 };
+
+static bool firmware_handoff;
+module_param(firmware_handoff, bool, 0444);
+MODULE_PARM_DESC(firmware_handoff, "Preserve an initialized firmware panel on first prepare");
 
 struct libra_panel_cmd {
 	u8 type;
@@ -113,11 +118,26 @@ static int libra_panel_bias_ready(struct libra_panel *ctx)
 	return 1;
 }
 
+static bool libra_panel_firmware_ready(struct libra_panel *ctx)
+{
+	int reset_dir = gpiod_get_direction(ctx->reset);
+	int enable_dir = gpiod_get_direction(ctx->enable);
+	int reset = gpiod_get_value_cansleep(ctx->reset);
+	int enable = gpiod_get_value_cansleep(ctx->enable);
+	int bias = libra_panel_bias_ready(ctx);
+
+	/* ASIS requests preserve firmware outputs; active-low reset must be off. */
+	return reset_dir == 0 && enable_dir == 0 && reset == 0 && enable == 1 && bias == 1;
+}
+
 static int libra_panel_prepare(struct drm_panel *panel)
 {
 	struct libra_panel *ctx = container_of(panel, struct libra_panel, panel);
+	bool preserve = ctx->firmware_prepared && libra_panel_firmware_ready(ctx);
 	int ret, ready;
 
+	/* A later prepare after native unprepare must use the cold sequence. */
+	ctx->firmware_prepared = false;
 	ret = regulator_bulk_enable(ARRAY_SIZE(ctx->supplies), ctx->supplies);
 	if (ret)
 		return ret;
@@ -129,6 +149,10 @@ static int libra_panel_prepare(struct drm_panel *panel)
 	if (ret) {
 		dev_err(&ctx->dsi->dev, "panel bias output not ready: %d\n", ret);
 		goto supplies_off;
+	}
+	if (preserve) {
+		/* OEM cont-splash keeps the LCD initialized without reset/on packets. */
+		return 0;
 	}
 	ret = gpiod_direction_output(ctx->enable, 1);
 	if (ret)
@@ -153,16 +177,28 @@ supplies_off:
 	return ret;
 }
 
-static int libra_panel_unprepare(struct drm_panel *panel)
+static int libra_panel_disable(struct drm_panel *panel)
 {
 	struct libra_panel *ctx = container_of(panel, struct libra_panel, panel);
 	int ret;
 
+	/* Send HS shutdown commands before the encoder stops video timing. */
 	ret = libra_panel_commands(ctx, libra_off, ARRAY_SIZE(libra_off), false);
+	if (ret)
+		dev_err(&ctx->dsi->dev,
+			"panel shutdown command failed: %d; forcing power-off\n", ret);
+
+	/* Backlight is off; unprepare will reset and remove power even on error. */
+	return 0;
+}
+
+static int libra_panel_unprepare(struct drm_panel *panel)
+{
+	struct libra_panel *ctx = container_of(panel, struct libra_panel, panel);
+
 	gpiod_set_value_cansleep(ctx->reset, 1);
 	gpiod_set_value_cansleep(ctx->enable, 0);
-	regulator_bulk_disable(ARRAY_SIZE(ctx->supplies), ctx->supplies);
-	return ret;
+	return regulator_bulk_disable(ARRAY_SIZE(ctx->supplies), ctx->supplies);
 }
 
 static int libra_panel_get_modes(struct drm_panel *panel,
@@ -196,6 +232,7 @@ static int libra_panel_get_modes(struct drm_panel *panel,
 
 static const struct drm_panel_funcs libra_panel_funcs = {
 	.prepare = libra_panel_prepare,
+	.disable = libra_panel_disable,
 	.unprepare = libra_panel_unprepare,
 	.get_modes = libra_panel_get_modes,
 };
@@ -220,6 +257,7 @@ static int libra_panel_probe(struct mipi_dsi_device *dsi)
 	ctx->enable = devm_gpiod_get(&dsi->dev, "enable", GPIOD_ASIS);
 	if (IS_ERR(ctx->enable))
 		return dev_err_probe(&dsi->dev, PTR_ERR(ctx->enable), "Missing enable GPIO\n");
+	ctx->firmware_prepared = firmware_handoff;
 
 	dsi->lanes = 4;
 	dsi->format = MIPI_DSI_FMT_RGB888;

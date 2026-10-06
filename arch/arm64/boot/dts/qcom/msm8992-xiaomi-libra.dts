@@ -28,16 +28,15 @@
 	qcom,pmic-id = <65545 65546 0 0>;
 	qcom,board-id = <12 0>;
 
-	/* The simplefb variant keeps the bootloader-enabled display as fallback. */
 	chosen {
-		bootargs = "earlycon=tty0 console=tty0";
+		bootargs = "console=tty0";
 
 		#address-cells = <2>;
 		#size-cells = <2>;
 		ranges;
 
 		framebuffer0: framebuffer@3400000 {
-			status = "disabled";
+			status = "okay";
 			compatible = "simple-framebuffer";
 			reg = <0 0x3400000 0 (1080 * 1920 * 3)>;
 			width = <1080>;
@@ -45,8 +44,7 @@
 			stride = <(1080 * 3)>;
 			format = "r8g8b8";
 			/*
-			 * That's a lot of clocks, but it's necessary due
-			 * to unused clk cleanup & no panel driver yet..
+			 * Hold firmware display resources until native DRM handover.
 			 */
 			clocks = <&mmcc MDSS_AHB_CLK>,
 				 <&mmcc MDSS_AXI_CLK>,
@@ -223,14 +221,14 @@
 };
 
 &mmcc {
-	/* MMCC resolves the DSI RCG parents through these firmware names. */
+	/* Resolve DSI clocks by name when the MSM module registers its PLL.
+	 * Direct PHY phandles would defer MMCC, which also supplies PHY AHB.
+	 */
 	clocks = <&xo_board>,
 		 <&gcc GPLL0_OUT_MMSSCC>,
 		 <&rpmcc RPM_SMD_MMSSNOC_AHB_CLK>,
 		 <&rpmcc RPM_SMD_GFX3D_CLK_SRC>,
-		 <&mdss_dsi0_phy 1>,
-		 <&mdss_dsi0_phy 0>,
-		 <0>, <0>, <0>;
+		 <0>, <0>, <0>, <0>, <0>;
 };
 
 &pm8994_spmi_regulators {
@@ -554,7 +552,8 @@
 	status = "okay";
 	/* Linux controls brightness directly without a panel CABC PWM signal. */
 	/delete-property/ qcom,cabc;
-	default-brightness = <512>;
+	/* Illuminate only after native fbcon scanout has been checked. */
+	default-brightness = <0>;
 	qcom,fdbk-output = "auto";
 	qcom,vref-mv = <350>;
 	/* The selected factory DT overrides the vendor's generic 104 ns default. */

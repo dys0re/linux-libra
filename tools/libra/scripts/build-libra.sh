@@ -50,8 +50,7 @@ awk '
 ' "$fragment" "$output_dir/.config"
 
 if [ "$#" -eq 0 ]; then
-	set -- Image modules qcom/msm8992-xiaomi-libra.dtb \
-		qcom/msm8992-xiaomi-libra-simplefb.dtb qcom/msm8992-xiaomi-libra-drm-late.dtb
+	set -- Image modules qcom/msm8992-xiaomi-libra.dtb
 fi
 exec make -C "$kernel_tree" O="$output_dir" ARCH=arm64 \
 	CROSS_COMPILE="$cross_compile" -j"$build_jobs" "$@"

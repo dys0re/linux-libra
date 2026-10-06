@@ -18,6 +18,7 @@
 #define PLL_VCOTAIL_EN		0x004
 #define PLL_CMN_MODE		0x008
 #define PLL_BIAS_EN		0x030
+#define PLL_BKG_KVCO_CAL_EN	0x02c
 #define PLL_RESETSM_CTRL		0x04c
 #define PLL_RESETSM_CTRL2		0x050
 #define PLL_RESETSM_CTRL3		0x054
@@ -36,6 +37,8 @@
 #define PLL_BYTE_DIV		0x144
 #define PLL_PIXEL_DIV		0x148
 #define PLL_RESET_SM		0x150
+#define PLL_CORE_VCO_TUNE		0x160
+#define PLL_CORE_KVCO_CODE	0x168
 #define PLL_POLL_MAX_READS	15
 #define PLL_POLL_INTERVAL_US	1000
 
@@ -60,6 +63,11 @@ struct dsi_pll_20nm {
 	/* Desired clock configuration survives PHY reset and GDSC off. */
 	u32 post_div;
 	u32 pixel_div;
+	/* Downstream reuses calibrated trim codes while the VCO rate is unchanged. */
+	unsigned long locking_rate;
+	u32 vco_tune;
+	u32 kvco_code;
+	bool trims_valid;
 	struct dsi_20nm_divider ndiv;
 	struct dsi_20nm_divider pixel;
 	struct dsi_20nm_mux byte_mux;
@@ -209,6 +217,7 @@ static int pll_20nm_prepare(struct clk_hw *hw)
 	u32 dec, frac, status;
 	const char *stage = "calibration";
 	int ret;
+	bool init_lock;
 	static const struct { u16 reg; u8 val; } config[] = {
 		{ 0x000, 0x40 }, { 0x00c, 0x0f }, { 0x010, 0x0f },
 		{ 0x018, 0x08 }, { 0x01c, 0x0e }, { 0x02c, 0x08 },
@@ -258,11 +267,20 @@ static int pll_20nm_prepare(struct clk_hw *hw)
 	writel((comparator >> 16) & 0xff, base + PLL_LOCK_CMP3);
 	writel(0x0d, base + PLL_LOCK_CMP_EN);
 
-	/* Always calibrate on a cold start; dynamic refresh is not supported. */
-	writel(0, base + PLL_KVCO_CODE);
-	writel(0, base + PLL_VCO_TUNE);
-	writel(0x24, base + PLL_RESETSM_CTRL);
-	writel(0x07, base + PLL_RESETSM_CTRL2);
+	init_lock = !pll->trims_valid || pll->locking_rate != pll->rate;
+	if (init_lock) {
+		/* Downstream pll_20nm_vco_init_lock(): obtain this rate's trim codes. */
+		writel(0, base + PLL_KVCO_CODE);
+		writel(0, base + PLL_VCO_TUNE);
+		writel(0x24, base + PLL_RESETSM_CTRL);
+		writel(0x07, base + PLL_RESETSM_CTRL2);
+	} else {
+		/* Downstream override_trim_codes() and vco_relock(). */
+		writel((pll->kvco_code & 0x3f) | BIT(5), base + PLL_KVCO_CODE);
+		writel((pll->vco_tune & 0x7f) | BIT(7), base + PLL_VCO_TUNE);
+		writel(0xac, base + PLL_RESETSM_CTRL);
+		writel(0x28, base + PLL_BKG_KVCO_CAL_EN);
+	}
 	writel(0x03, base + PLL_VCOTAIL_EN);
 	writel(0x02, base + PLL_RESETSM_CTRL3);
 	udelay(10);
@@ -276,18 +294,21 @@ static int pll_20nm_prepare(struct clk_hw *hw)
 		ret = pll_20nm_poll_status(base, BIT(6), &status);
 	}
 	if (ret) {
-		/* Capture while the PHY's power/clocks and analog rails are on. */
+		pll->trims_valid = false;
+		pll->locking_rate = 0;
 		dev_err(&phy->pdev->dev,
-			"DSI PLL %s timeout: status=%#x phsel=%#x iptat=%#x post=%#x pixel=%#x dec=%#x frac=%#x/%#x/%#x\n",
-			stage, status, readl(base + 0x018), readl(base + 0x01c),
-			readl(base + PLL_POST_DIV), readl(base + PLL_PIXEL_DIV),
-			readl(base + PLL_DEC_START1), readl(base + PLL_FRAC_START1),
-			readl(base + PLL_FRAC_START2), readl(base + PLL_FRAC_START3));
+			"DSI PLL %s timeout: status=%#x\n", stage, status);
 		pll_20nm_powerdown(pll->aux_base);
 		pll_20nm_powerdown(base);
 		regulator_bulk_disable(phy->cfg->num_regulators, phy->supplies);
-		return dev_err_probe(&phy->pdev->dev, ret, "DSI PLL failed to lock\n");
+		return ret;
 	}
+	if (init_lock) {
+		pll->kvco_code = readl(base + PLL_CORE_KVCO_CODE);
+		pll->vco_tune = readl(base + PLL_CORE_VCO_TUNE);
+		pll->trims_valid = true;
+	}
+	pll->locking_rate = pll->rate;
 	pll_20nm_powerdown(pll->aux_base);
 	phy->pll_on = true;
 	dev_dbg(&phy->pdev->dev, "DSI PLL locked: vco=%lu status=%#x\n",

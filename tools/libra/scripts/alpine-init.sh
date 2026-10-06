@@ -14,8 +14,7 @@ mount -t debugfs debugfs /sys/kernel/debug
 mount -t pstore pstore /sys/fs/pstore
 hostname libra-test
 ip link set lo up
-# Native DRM is a module and is never loaded by init. Retain simplefb output
-# until the user requests the handover over the already working ACM channel.
+# Native display modules load after USB configuration; ACM stays independent.
 
 # Start ACM before any screen output, DRM queries or status collection.
 (
@@ -28,13 +27,21 @@ ip link set lo up
 	done
 ) < /dev/null > /run/libra-acm-getty.log 2>&1 &
 
-printf '\nAlpine Mi 4C bring-up initrd [v35: native display cleanup]\n'
+printf '\nAlpine Mi 4C native DRM initrd\n'
 printf 'RAM-only, unauthenticated test shell\n'
 
 # Run independently so a missing UDC cannot block the local diagnostic shell.
 # The helper checks each setup step and prints the actual failure, not just a
 # secondary "can't find device usb0" from an unconditional IP command.
-/usr/sbin/libra-usb-gadget 2>&1 | tee /run/libra-usb.log &
+(
+	if /usr/sbin/libra-usb-gadget > /run/libra-usb.log 2>&1; then
+		: > /run/libra-usb-ready
+	fi
+) &
+
+if grep -qw 'libra.drm_auto=1' /proc/cmdline; then
+	/usr/sbin/libra-drm-console > /run/libra-drm-console.log 2>&1 &
+fi
 
 {
 	uname -a
@@ -61,7 +68,7 @@ dmesg > /run/boot-dmesg.txt
 
 printf '\nUSB serial (when bound): 115200 baud; see /run/libra-usb.log for USB state.\n'
 printf 'After native driver loading: libra-drm-test scan; logs: /run/libra-drm/\n'
-printf 'Late DRM image: libra-drm-load bias|backlight|panel|release|msm, one stage at a time.\n'
+printf 'Native console: /run/libra-drm-console.log; manual stages: bias|backlight|panel|release|msm|console.\n'
 printf 'All changes disappear at reboot. No login password in this test image.\n'
 
 # Keep PID 1 alive, including after the local diagnostic shell exits.

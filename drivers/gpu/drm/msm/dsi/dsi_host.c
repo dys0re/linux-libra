@@ -175,6 +175,8 @@ struct msm_dsi_host {
 
 	bool registered;
 	bool power_on;
+	bool bootstrap_supplies_on;
+	unsigned int bootstrap_num_supplies;
 	bool enabled;
 	int irq;
 };
@@ -189,6 +191,16 @@ static inline void dsi_write(struct msm_dsi_host *msm_host, u32 reg, u32 data)
 	writel(data, msm_host->ctrl_base + reg);
 }
 
+static void dsi_bootstrap_supplies_release(void *data)
+{
+	struct msm_dsi_host *msm_host = data;
+
+	if (!msm_host->bootstrap_supplies_on)
+		return;
+	regulator_bulk_disable(msm_host->bootstrap_num_supplies, msm_host->supplies);
+	msm_host->bootstrap_supplies_on = false;
+}
+
 static const struct msm_dsi_cfg_handler *dsi_get_config_8992(
 		struct msm_dsi_host *msm_host, const struct msm_dsi_config *bootstrap)
 {
@@ -198,8 +210,6 @@ static const struct msm_dsi_cfg_handler *dsi_get_config_8992(
 	u32 minor;
 	int ret, i;
 
-	if (bootstrap->num_bus_clks < 1 || bootstrap->num_bus_clks > DSI_BUS_CLK_MAX)
-		return ERR_PTR(-EINVAL);
 	for (i = 0; i < bootstrap->num_bus_clks; i++)
 		clocks[i].id = bootstrap->bus_clk_names[i];
 	ret = devm_clk_bulk_get(dev, bootstrap->num_bus_clks, clocks);
@@ -229,6 +239,14 @@ static const struct msm_dsi_cfg_handler *dsi_get_config_8992(
 	ret = cfg_hnd && cfg_hnd->cfg == bootstrap ? 0 : -EINVAL;
 
 	clk_bulk_disable_unprepare(bootstrap->num_bus_clks, clocks);
+	if (!ret) {
+		/* Keep panel rails on from discovery through the first modeset. */
+		msm_host->bootstrap_num_supplies = bootstrap->num_regulators;
+		msm_host->bootstrap_supplies_on = true;
+		ret = devm_add_action_or_reset(dev, dsi_bootstrap_supplies_release,
+					     msm_host);
+		goto runtime_put;
+	}
 supplies_off:
 	regulator_bulk_disable(bootstrap->num_regulators, msm_host->supplies);
 runtime_put:
@@ -1013,6 +1031,8 @@ static void dsi_timing_setup(struct msm_dsi_host *msm_host, bool is_bonded_dsi)
 	u32 wc;
 	int ret;
 	bool wide_bus_enabled = msm_dsi_host_is_wide_bus_enabled(&msm_host->base);
+	bool timing_db_mode = of_device_is_compatible(msm_host->pdev->dev.of_node,
+						   "qcom,msm8992-dsi-ctrl");
 
 	DBG("");
 
@@ -1089,6 +1109,15 @@ static void dsi_timing_setup(struct msm_dsi_host *msm_host, bool is_bonded_dsi)
 		if (msm_host->dsc)
 			dsi_update_dsc_timing(msm_host, false);
 
+		/*
+		 * The factory MSM8992 DT enables timing double buffering.
+		 * Commit all six timing registers together, rather than relying
+		 * on the bootloader's shadow-register state after handover.
+		 */
+		if (timing_db_mode)
+			dsi_write(msm_host, REG_DSI_TIMING_DB_MODE,
+				  DSI_TIMING_DB_MODE_ENABLE);
+
 		dsi_write(msm_host, REG_DSI_ACTIVE_H,
 			DSI_ACTIVE_H_START(ha_start) |
 			DSI_ACTIVE_H_END(ha_end));
@@ -1106,6 +1135,13 @@ static void dsi_timing_setup(struct msm_dsi_host *msm_host, bool is_bonded_dsi)
 		dsi_write(msm_host, REG_DSI_ACTIVE_VSYNC_VPOS,
 			DSI_ACTIVE_VSYNC_VPOS_START(vs_start) |
 			DSI_ACTIVE_VSYNC_VPOS_END(vs_end));
+
+		if (timing_db_mode) {
+			/* Order all shadow timing writes before committing them. */
+			wmb();
+			dsi_write(msm_host, REG_DSI_TIMING_FLUSH,
+				  DSI_TIMING_FLUSH_FLUSH);
+		}
 	} else {		/* command mode */
 		if (msm_host->dsc)
 			dsi_update_dsc_timing(msm_host, true);
@@ -2099,6 +2135,8 @@ void msm_dsi_host_destroy(struct mipi_dsi_host *host)
 {
 	struct msm_dsi_host *msm_host = to_msm_dsi_host(host);
 
+	dsi_bootstrap_supplies_release(msm_host);
+
 	DBG("");
 	if (msm_host->workqueue) {
 		destroy_workqueue(msm_host->workqueue);
@@ -2504,6 +2542,8 @@ int msm_dsi_host_power_on(struct mipi_dsi_host *host,
 {
 	struct msm_dsi_host *msm_host = to_msm_dsi_host(host);
 	const struct msm_dsi_cfg_handler *cfg_hnd = msm_host->cfg_hnd;
+	bool setup_before_link = of_device_is_compatible(msm_host->pdev->dev.of_node,
+						       "qcom,msm8992-dsi-ctrl");
 	int ret = 0;
 
 	mutex_lock(&msm_host->dev_mutex);
@@ -2516,8 +2556,14 @@ int msm_dsi_host_power_on(struct mipi_dsi_host *host,
 
 	msm_dsi_sfpb_config(msm_host, true);
 
-	ret = regulator_bulk_enable(msm_host->cfg_hnd->cfg->num_regulators,
-				    msm_host->supplies);
+	if (msm_host->bootstrap_supplies_on) {
+		/* Transfer the discovery vote to normal host power ownership. */
+		msm_host->bootstrap_supplies_on = false;
+		ret = 0;
+	} else {
+		ret = regulator_bulk_enable(msm_host->cfg_hnd->cfg->num_regulators,
+					    msm_host->supplies);
+	}
 	if (ret) {
 		pr_err("%s:Failed to enable vregs.ret=%d\n",
 			__func__, ret);
@@ -2527,6 +2573,13 @@ int msm_dsi_host_power_on(struct mipi_dsi_host *host,
 	ret = pm_runtime_resume_and_get(&msm_host->pdev->dev);
 	if (ret < 0)
 		goto fail_disable_reg;
+	if (setup_before_link) {
+		/* mdss_dsi_ctrl_setup() precedes link clocks in the vendor path. */
+		dsi_timing_setup(msm_host, is_bonded_dsi);
+		dsi_ctrl_enable(msm_host, phy_shared_timings, phy);
+		dsi_op_mode_config(msm_host,
+			!!(msm_host->mode_flags & MIPI_DSI_MODE_VIDEO), true);
+	}
 	ret = cfg_hnd->ops->link_clk_set_rate(msm_host);
 	if (!ret)
 		ret = cfg_hnd->ops->link_clk_enable(msm_host);
@@ -2543,9 +2596,11 @@ int msm_dsi_host_power_on(struct mipi_dsi_host *host,
 		goto fail_disable_clk;
 	}
 
-	dsi_timing_setup(msm_host, is_bonded_dsi);
+	if (!setup_before_link)
+		dsi_timing_setup(msm_host, is_bonded_dsi);
 	dsi_sw_reset(msm_host);
-	dsi_ctrl_enable(msm_host, phy_shared_timings, phy);
+	if (!setup_before_link)
+		dsi_ctrl_enable(msm_host, phy_shared_timings, phy);
 
 	msm_host->power_on = true;
 	mutex_unlock(&msm_host->dev_mutex);
@@ -2555,6 +2610,8 @@ int msm_dsi_host_power_on(struct mipi_dsi_host *host,
 fail_disable_clk:
 	cfg_hnd->ops->link_clk_disable(msm_host);
 fail_put_runtime:
+	if (setup_before_link)
+		dsi_ctrl_disable(msm_host);
 	pm_runtime_put(&msm_host->pdev->dev);
 fail_disable_reg:
 	regulator_bulk_disable(msm_host->cfg_hnd->cfg->num_regulators,

@@ -741,6 +741,15 @@ static int pmic_gpio_direction_output(struct gpio_chip *chip,
 	return pmic_gpio_config_set(state->ctrl, pin, &config, 1);
 }
 
+static int pmic_gpio_get_direction(struct gpio_chip *chip, unsigned int pin)
+{
+	struct pmic_gpio_state *state = gpiochip_get_data(chip);
+	struct pmic_gpio_pad *pad = state->ctrl->desc->pins[pin].drv_data;
+
+	/* Populated from firmware MODE_CTL and updated by pin configuration. */
+	return pad->output_enabled ? GPIO_LINE_DIRECTION_OUT : GPIO_LINE_DIRECTION_IN;
+}
+
 static int pmic_gpio_get(struct gpio_chip *chip, unsigned pin)
 {
 	struct pmic_gpio_state *state = gpiochip_get_data(chip);
@@ -800,6 +809,7 @@ static void pmic_gpio_dbg_show(struct seq_file *s, struct gpio_chip *chip)
 static const struct gpio_chip pmic_gpio_gpio_template = {
 	.direction_input	= pmic_gpio_direction_input,
 	.direction_output	= pmic_gpio_direction_output,
+	.get_direction		= pmic_gpio_get_direction,
 	.get			= pmic_gpio_get,
 	.set			= pmic_gpio_set,
 	.request		= gpiochip_generic_request,

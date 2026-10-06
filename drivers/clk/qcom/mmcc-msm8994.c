@@ -99,6 +99,71 @@ static const struct clk_parent_data mmcc_8992_xo_dsibyte[] = {
 
 static struct clk_init_data byte0_8992_init;
 static struct clk_init_data pclk0_8992_init;
+static struct clk_ops byte0_8992_ops;
+static struct clk_ops pclk0_8992_ops;
+
+static int mmcc_8992_dsi_set_rate(struct clk_hw *hw, unsigned long rate,
+				unsigned long parent_rate,
+				const struct clk_ops *ops, int parent_index)
+{
+	struct clk_hw *parent = clk_hw_get_parent(hw);
+	struct clk *input;
+	int ret;
+
+	if (!parent) {
+		pr_err("%s: DSI RCG input clock is absent\n", clk_hw_get_name(hw));
+		return -EINVAL;
+	}
+	input = clk_hw_get_clk(parent, NULL);
+	if (IS_ERR(input)) {
+		pr_err("%s: failed to acquire DSI RCG input clock: %ld\n",
+		       clk_hw_get_name(hw), PTR_ERR(input));
+		return PTR_ERR(input);
+	}
+
+	/* PLL rate/dividers are cached before CCF reaches the RCG callback.
+	 * Enable its input only for this hardware update. Parent discovery
+	 * during PLL registration must not try starting a zero-rate PLL.
+	 */
+	ret = clk_prepare_enable(input);
+	if (ret) {
+		pr_err("%s: failed to enable DSI RCG input clock: %d\n",
+		       clk_hw_get_name(hw), ret);
+		goto put_input;
+	}
+	if (parent_index < 0)
+		ret = ops->set_rate(hw, rate, parent_rate);
+	else
+		ret = ops->set_rate_and_parent(hw, rate, parent_rate, parent_index);
+	clk_disable_unprepare(input);
+put_input:
+	clk_put(input);
+	return ret;
+}
+
+static int mmcc_8992_byte_set_rate(struct clk_hw *hw, unsigned long rate,
+				 unsigned long parent_rate)
+{
+	return mmcc_8992_dsi_set_rate(hw, rate, parent_rate, &clk_byte2_ops, -1);
+}
+
+static int mmcc_8992_byte_set_rate_and_parent(struct clk_hw *hw,
+		unsigned long rate, unsigned long parent_rate, u8 index)
+{
+	return mmcc_8992_dsi_set_rate(hw, rate, parent_rate, &clk_byte2_ops, index);
+}
+
+static int mmcc_8992_pixel_set_rate(struct clk_hw *hw, unsigned long rate,
+				  unsigned long parent_rate)
+{
+	return mmcc_8992_dsi_set_rate(hw, rate, parent_rate, &clk_pixel_ops, -1);
+}
+
+static int mmcc_8992_pixel_set_rate_and_parent(struct clk_hw *hw,
+		unsigned long rate, unsigned long parent_rate, u8 index)
+{
+	return mmcc_8992_dsi_set_rate(hw, rate, parent_rate, &clk_pixel_ops, index);
+}
 
 static const struct pll_vco mmpll_p_vco[] = {
 	{ 250000000, 500000000, 3 },
@@ -2579,9 +2644,17 @@ static int mmcc_msm8994_probe(struct platform_device *pdev)
 	if (of_device_is_compatible(pdev->dev.of_node, "qcom,mmcc-msm8992")) {
 		byte0_8992_init = *byte0_clk_src.clkr.hw.init;
 		byte0_8992_init.parent_data = mmcc_8992_xo_dsibyte;
+		byte0_8992_ops = clk_byte2_ops;
+		byte0_8992_ops.set_rate = mmcc_8992_byte_set_rate;
+		byte0_8992_ops.set_rate_and_parent = mmcc_8992_byte_set_rate_and_parent;
+		byte0_8992_init.ops = &byte0_8992_ops;
 		byte0_clk_src.clkr.hw.init = &byte0_8992_init;
 		pclk0_8992_init = *pclk0_clk_src.clkr.hw.init;
 		pclk0_8992_init.parent_data = mmcc_8992_xo_dsipll;
+		pclk0_8992_ops = clk_pixel_ops;
+		pclk0_8992_ops.set_rate = mmcc_8992_pixel_set_rate;
+		pclk0_8992_ops.set_rate_and_parent = mmcc_8992_pixel_set_rate_and_parent;
+		pclk0_8992_init.ops = &pclk0_8992_ops;
 		pclk0_clk_src.clkr.hw.init = &pclk0_8992_init;
 
 		/* MSM8992 features less clocks and some have different freq tables */

@@ -78,6 +78,8 @@ sudo -n install -m 755 "$workspace/scripts/alpine-drm-test.sh" \
 	"$mount_dir/usr/sbin/libra-drm-test"
 sudo -n install -m 755 "$workspace/scripts/alpine-drm-load.sh" \
 	"$mount_dir/usr/sbin/libra-drm-load"
+sudo -n install -m 755 "$workspace/scripts/alpine-drm-console.sh" \
+	"$mount_dir/usr/sbin/libra-drm-console"
 sudo -n install -m 755 "$build_dir/libra-kmsg" "$mount_dir/usr/sbin/libra-kmsg"
 # The kernel opens these before /init has mounted devtmpfs.
 sudo -n mkdir -p "$mount_dir/dev"
@@ -91,6 +93,7 @@ sudo -n chroot "$mount_dir" /bin/sh -n /init
 sudo -n chroot "$mount_dir" /bin/sh -n /usr/sbin/libra-usb-gadget
 sudo -n chroot "$mount_dir" /bin/sh -n /usr/sbin/libra-drm-test
 sudo -n chroot "$mount_dir" /bin/sh -n /usr/sbin/libra-drm-load
+sudo -n chroot "$mount_dir" /bin/sh -n /usr/sbin/libra-drm-console
 sudo -n chroot "$mount_dir" /bin/busybox --list | awk '
 	{ present[$0] = 1 }
 	END {

@@ -4,11 +4,11 @@ set -u
 
 action=${1:-scan}
 usage() {
- printf 'Usage: libra-drm-test scan|backlight\n       libra-drm-test modeset|hold|preview CONNECTOR CRTC\n' >&2
+ printf 'Usage: libra-drm-test scan|backlight|console\n       libra-drm-test modeset|hold|preview CONNECTOR CRTC\n' >&2
  exit 2
 }
 case "$action" in
- scan|backlight) [ "$#" -le 1 ] || usage ;;
+ scan|backlight|console) [ "$#" -le 1 ] || usage ;;
  modeset|hold|preview)
   [ "$#" -eq 3 ] || usage
   for id in "$2" "$3"; do
@@ -19,8 +19,9 @@ case "$action" in
 esac
 
 output=/run/libra-drm
+case "$action" in console) output=/run/libra-drm-console ;; esac
 mkdir -p "$output" || exit 1
-failure_pattern='DSI PLL .*timeout|DSI PLL failed to lock|DSI (timeout|FIFO) status=|dsi_err_worker: status=|libra_panel_prepare.*failed:|panel bias output not ready:|Power on failed:|failed to enable link clocks|vblank time out|flip_done timed out|commit wait timed out|Internal error:|synchronous external abort|errors: [0-9a-fA-F]+|WARNING:|Unbalanced enable for IRQ|BUG:|Kernel panic|wled.*failed|WLED.*(failed|fault)'
+failure_pattern='Skipping prepare of already prepared panel|wait for video done timed out|cmd dma tx failed|panel shutdown command failed|DSI RCG input clock|DSI PLL .*timeout|DSI PLL failed to lock|DSI (timeout|FIFO) status=|dsi_err_worker: status=|libra_panel_prepare.*failed:|panel bias output not ready:|Power on failed:|failed to enable link clocks|vblank time out|flip_done timed out|commit wait timed out|Internal error:|synchronous external abort|errors: [0-9a-fA-F]+|WARNING:|Unbalanced enable for IRQ|BUG:|Kernel panic|wled.*failed|WLED.*(failed|fault)'
 
 preview_brightness=512
 
@@ -30,7 +31,7 @@ blackout() {
 	done
 }
 
-if [ "$action" = preview ] || [ "$action" = backlight ]; then
+if [ "$action" = preview ] || [ "$action" = backlight ] || [ "$action" = console ]; then
 	preview_backlight=''
 	for b in /sys/class/backlight/*; do
 		[ -L "$b/device/driver/module" ] || continue
@@ -191,11 +192,83 @@ snapshot() {
 	done
 }
 
+
+new_kernel_faults() {
+	dmesg > "$output/dmesg-after.txt" 2>&1 || return 0
+	before_lines=$(wc -l < "$output/dmesg-before.txt")
+	after_lines=$(wc -l < "$output/dmesg-after.txt")
+	if [ "$after_lines" -ge "$before_lines" ]; then
+		tail -n "+$((before_lines + 1))" "$output/dmesg-after.txt" > "$output/dmesg-new.txt"
+	else
+		cp "$output/dmesg-after.txt" "$output/dmesg-new.txt"
+	fi
+	grep -Eq "$failure_pattern" "$output/dmesg-new.txt"
+}
+
+console_scanout() {
+	console_fb=''
+	for fb in /sys/class/graphics/fb[0-9]*; do
+		[ -r "$fb/name" ] || continue
+		[ "$(cat "$fb/name")" != msmdrmfb ] || { console_fb="$fb"; break; }
+	done
+	if [ -z "$console_fb" ]; then
+		printf 'Native MSM framebuffer console is absent.\n' >&2
+		return 1
+	fi
+	printf 'Native framebuffer console: %s (%s)\n' "$console_fb" "$(cat "$console_fb/name")"
+
+	rm -f "$output/state-live-2s.txt" "$output/state-live-5s.txt"
+	sleep 2
+	drm_states > "$output/state-live-2s.txt"
+	console_crtc=$(awk '
+		/^crtc\[/ { id=$0; sub(/^crtc\[/, "", id); sub(/\].*/, "", id) }
+		/^[[:space:]]*active=1$/ { print id; exit }
+	' "$output/state-live-2s.txt")
+	case "$console_crtc" in
+		''|*[!0-9]*) printf 'Native console has no active CRTC.\n' >&2; return 1 ;;
+	esac
+	if ! live_summary 2s "$console_crtc" > "$output/live-summary-2s.txt" ||
+	   ! grep -q 'underrun_count=0 ' "$output/live-summary-2s.txt"; then
+		cat "$output/live-summary-2s.txt"
+		return 1
+	fi
+	sleep 3
+	drm_states > "$output/state-live-5s.txt"
+	if ! live_summary 5s "$console_crtc" > "$output/live-summary-5s.txt" ||
+	   ! grep -q 'underrun_count=0 ' "$output/live-summary-5s.txt"; then
+		cat "$output/live-summary-5s.txt"
+		return 1
+	fi
+	cat "$output/live-summary-2s.txt" "$output/live-summary-5s.txt"
+	frames_before=$(sed -n 's/.* frame_count=\([0-9][0-9]*\) .*/\1/p' "$output/live-summary-2s.txt")
+	frames_after=$(sed -n 's/.* frame_count=\([0-9][0-9]*\) .*/\1/p' "$output/live-summary-5s.txt")
+	frame_delta=$(( (frames_after - frames_before + 4294967296) % 4294967296 ))
+	if [ "$frame_delta" -eq 0 ] || new_kernel_faults; then
+		printf 'Native console scanout failed; keep backlight off.\n' >&2
+		return 1
+	fi
+	printf 'Native console frame progress: %s frames\n' "$frame_delta"
+	printf '%s\n' "$preview_brightness" > "$preview_backlight/brightness" || return 1
+	sleep 1
+	if [ "$(cat "$preview_backlight/actual_brightness")" != "$preview_brightness" ] ||
+	   [ "$(cat "$preview_backlight/bl_power")" != 0 ]; then
+		printf 'Native console backlight readback failed.\n' >&2
+		return 1
+	fi
+	printf 'Native console brightness: %s; illumination stays on.\n' "$preview_brightness"
+}
+
 snapshot before
 if [ "$action" = scan ]; then
 	modetest -M msm -c -e -p > "$output/modetest-scan.txt" 2>&1
 	result=$?
 	cat "$output/modetest-scan.txt"
+elif [ "$action" = console ]; then
+	trap 'blackout; exit 130' INT TERM HUP
+	console_scanout
+	result=$?
+	if [ "$result" -ne 0 ]; then blackout; fi
+	trap - INT TERM HUP
 else
 	rm -f "$output/state-live-2s.txt" "$output/state-live-5s.txt" \
 		"$output/live-summary-2s.txt" "$output/live-summary-5s.txt" \
@@ -304,15 +377,7 @@ else
 	fi
 fi
 snapshot after
-before_lines=$(wc -l < "$output/dmesg-before.txt")
-after_lines=$(wc -l < "$output/dmesg-after.txt")
-if [ "$after_lines" -ge "$before_lines" ]; then
-	tail -n "+$((before_lines + 1))" "$output/dmesg-after.txt" > "$output/dmesg-new.txt"
-else
-	# The ring wrapped; preserve the available records instead of losing errors.
-	cp "$output/dmesg-after.txt" "$output/dmesg-new.txt"
-fi
-if [ "$action" != scan ] && grep -Eq "$failure_pattern" "$output/dmesg-new.txt"; then
+if [ "$action" != scan ] && new_kernel_faults; then
 	blackout
 	printf '\nKernel display failure detected; keep backlight off.\n' >&2
 	if [ "$result" -eq 0 ]; then result=1; fi

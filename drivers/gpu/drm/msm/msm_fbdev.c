@@ -119,6 +119,8 @@ static int msm_fbdev_create(struct drm_fb_helper *helper,
 		goto fail;
 	}
 	fbi->screen_size = bo->size;
+	/* The GEM vaddr is a system-memory mapping used by the sys helpers. */
+	fbi->flags |= FBINFO_VIRTFB;
 	fbi->fix.smem_start = paddr;
 	fbi->fix.smem_len = bo->size;
 
