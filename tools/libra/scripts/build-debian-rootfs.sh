@@ -1,0 +1,71 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+# Build the real Debian root only inside its mounted F2FS image.
+set -eu
+workspace=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+build="$workspace/build"
+image="$build/debian-trixie-arm64.f2fs.img"
+root="$workspace/rootfs"
+mirror=${DEBIAN_MIRROR:-https://mirrors.tuna.tsinghua.edu.cn/debian}
+mkdir -p "$build" "$root"
+if mountpoint -q "$root" || [ -n "$(find "$root" -mindepth 1 -maxdepth 1 -print -quit)" ]; then
+	printf 'rootfs/ must be empty and unmounted.\n' >&2
+	exit 1
+fi
+if [ ! -e "$image" ]; then
+	truncate -s 4G "$image"
+	mkfs.f2fs -f -l libra-debian "$image"
+fi
+sudo -n mount -t f2fs -o loop "$image" "$root"
+cleanup() {
+	for path in dev/pts dev proc sys; do
+		if mountpoint -q "$root/$path"; then sudo -n umount "$root/$path"; fi
+	done
+	sudo -n umount "$root"
+}
+trap cleanup EXIT
+trap 'exit 1' HUP INT TERM
+if [ ! -e "$root/etc/debian_version" ] && [ ! -e "$root/debootstrap/debootstrap" ]; then
+	sudo -n debootstrap --arch=arm64 --foreign --variant=minbase \
+		--include=ca-certificates trixie "$root" "$mirror"
+fi
+# Package installation must never start services on the build host.
+sudo -n mkdir -p "$root/usr/sbin"
+printf '#!/bin/sh\nexit 101\n' | sudo -n tee "$root/usr/sbin/policy-rc.d" >/dev/null
+sudo -n chmod 755 "$root/usr/sbin/policy-rc.d"
+if [ -e "$root/debootstrap/debootstrap" ]; then
+	sudo -n chroot "$root" /debootstrap/debootstrap --second-stage
+fi
+sudo -n mount --bind /dev "$root/dev"
+sudo -n mount -t devpts devpts "$root/dev/pts"
+sudo -n mount -t proc proc "$root/proc"
+sudo -n mount -t sysfs -o ro sysfs "$root/sys"
+sudo -n install -m 644 /etc/resolv.conf "$root/etc/resolv.conf"
+sudo -n env DEBIAN_FRONTEND=noninteractive chroot "$root" /bin/sh \
+	< "$workspace/scripts/configure-debian-rootfs.sh"
+release=$(make -s -C "$workspace/linux" O="$build/libra" ARCH=arm64 \
+	CROSS_COMPILE="${CROSS_COMPILE:-aarch64-linux-gnu-}" kernelrelease)
+sudo -n make -s -C "$workspace/linux" O="$build/libra" ARCH=arm64 \
+	CROSS_COMPILE="${CROSS_COMPILE:-aarch64-linux-gnu-}" \
+	INSTALL_MOD_PATH="$root" modules_install
+sudo -n rm -f "$root/lib/modules/$release/build" "$root/lib/modules/$release/source"
+sudo -n chroot "$root" depmod "$release"
+for helper in drm-load drm-test drm-console; do
+	sudo -n install -m 755 "$workspace/scripts/alpine-$helper.sh" "$root/usr/sbin/libra-$helper"
+done
+sudo -n install -m 755 "$build/libra-kmsg" "$root/usr/sbin/libra-kmsg"
+sudo -n cp -a "$workspace/linux/tools/libra/debian/." "$root/"
+sudo -n chmod 755 "$root/usr/sbin/libra-finalize-rootfs"
+sudo -n chroot "$root" /usr/sbin/libra-finalize-rootfs
+sudo -n chroot "$root" dpkg-query -W -f='${Package}\t${Version}\t${Architecture}\n' \
+	> "$build/debian-package-manifest.tsv"
+python3 "$workspace/scripts/build-debian-initrd.py" "$root"
+sudo -n chroot "$root" apt-get clean
+sudo -n rm -f "$root/usr/sbin/policy-rc.d" "$root/etc/ssh/ssh_host_"*
+sudo -n truncate -s 0 "$root/etc/machine-id"
+sudo -n rm -f "$root/var/lib/dbus/machine-id" "$root/var/lib/systemd/random-seed"
+# WSL's resolver is only a build-time input; restore the delivered DNS settings.
+printf 'nameserver 223.5.5.5\nnameserver 1.1.1.1\n' | sudo -n tee "$root/etc/resolv.conf" >/dev/null
+sync
+sudo -n fstrim "$root"
+printf 'Built %s\n' "$image"

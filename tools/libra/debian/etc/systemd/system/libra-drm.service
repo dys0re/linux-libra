@@ -1,0 +1,14 @@
+[Unit]
+Description=Libra OEM panel handover to MSM DRM
+After=libra-usb.service
+Requires=libra-usb.service
+Before=lightdm.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c '/usr/sbin/libra-drm-console > /run/libra-drm-console.log 2>&1'
+TimeoutStartSec=120
+RemainAfterExit=yes
+
+[Install]
+WantedBy=graphical.target

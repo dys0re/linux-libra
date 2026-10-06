@@ -1,0 +1,13 @@
+[Unit]
+Description=Assign the USB host its point-to-point address
+After=libra-usb.service
+Requires=libra-usb.service
+
+[Service]
+Type=simple
+ExecStart=/usr/sbin/dnsmasq --keep-in-foreground --conf-file=/etc/libra-usb-dhcp.conf
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

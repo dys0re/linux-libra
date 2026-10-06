@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=Libra desktop setup
+Exec=/usr/local/bin/libra-desktop-setup
+OnlyShowIn=XFCE;
+StartupNotify=false

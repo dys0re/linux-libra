@@ -1,0 +1,43 @@
+#!/bin/sh
+# USB ACM + NCM, shared by the tiny initrd and the Debian system service.
+set -eu
+gadget=/sys/kernel/config/usb_gadget/libra
+mkdir -p "$gadget"
+if [ -z "$(cat "$gadget/UDC")" ]; then
+ printf '0x1d6b' > "$gadget/idVendor"
+ printf '0x0105' > "$gadget/idProduct"
+ printf '0x0200' > "$gadget/bcdUSB"
+ printf '0xef' > "$gadget/bDeviceClass"
+ printf '0x02' > "$gadget/bDeviceSubClass"
+ printf '0x01' > "$gadget/bDeviceProtocol"
+ mkdir -p "$gadget/strings/0x409" "$gadget/configs/c.1/strings/0x409"
+ printf 'libra-debian' > "$gadget/strings/0x409/serialnumber"
+ printf 'Linux' > "$gadget/strings/0x409/manufacturer"
+ printf 'Mi 4C Debian' > "$gadget/strings/0x409/product"
+ printf 'Serial + NCM Ethernet' > "$gadget/configs/c.1/strings/0x409/configuration"
+ printf '250' > "$gadget/configs/c.1/MaxPower"
+ mkdir -p "$gadget/functions/acm.usb0" "$gadget/functions/ncm.usb0"
+ printf '02:00:00:00:07:02' > "$gadget/functions/ncm.usb0/dev_addr"
+ printf '02:00:00:00:07:01' > "$gadget/functions/ncm.usb0/host_addr"
+ for function in acm.usb0 ncm.usb0; do
+  [ -L "$gadget/configs/c.1/$function" ] || ln -s "$gadget/functions/$function" "$gadget/configs/c.1/$function"
+ done
+ elapsed=0
+ controller=''
+ while [ -z "$controller" ]; do
+  for path in /sys/class/udc/*; do
+   [ ! -e "$path" ] || controller=${path##*/}
+  done
+  [ -z "$controller" ] || break
+  [ "$elapsed" -lt 60 ] || { echo 'USB UDC did not appear' >&2; exit 1; }
+  sleep 1
+  elapsed=$((elapsed + 1))
+ done
+ printf '%s' "$controller" > "$gadget/UDC"
+fi
+interface=$(cat "$gadget/functions/ncm.usb0/ifname")
+ip addr replace 192.168.7.2/24 dev "$interface"
+ip link set "$interface" up
+ip route replace default via 192.168.7.1 dev "$interface" metric 900
+touch /run/libra-usb-ready
+printf 'USB ACM + NCM: %s, phone 192.168.7.2, host 192.168.7.1\n' "$interface"

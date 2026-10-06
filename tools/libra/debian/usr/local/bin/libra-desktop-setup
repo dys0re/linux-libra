@@ -1,0 +1,68 @@
+#!/bin/sh
+set -eu
+export LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe QT_QUICK_BACKEND=software
+xset s off
+xset -dpms
+# Apply defaults once. Subsequent sessions preserve the user's changes.
+marker="$HOME/.config/libra/desktop-initialized"
+if [ ! -e "$marker" ]; then
+ setprop() {
+  xfconf-query -c "$1" -p "$2" -n -t "$3" -s "$4"
+ }
+ setprop xsettings /Gdk/WindowScalingFactor int 2
+ setprop xsettings /Gdk/UnscaledDPI int 98304
+ setprop xsettings /Xft/DPI int 196608
+ setprop xsettings /Gtk/FontName string 'Noto Sans CJK SC 11'
+ setprop xsettings /Gtk/MonospaceFontName string 'DejaVu Sans Mono 11'
+ setprop xsettings /Net/ThemeName string Adwaita
+ setprop xsettings /Net/IconThemeName string Adwaita
+ setprop xsettings /Net/EnableEventSounds bool false
+ setprop xsettings /Gtk/ToolbarStyle string icons
+ setprop xfwm4 /general/use_compositing bool false
+ setprop xfwm4 /general/theme string Default-xhdpi
+ setprop xfwm4 /general/title_font string 'Noto Sans CJK SC Bold 12'
+ setprop xfwm4 /general/button_layout string 'O|HMC'
+ setprop xfwm4 /general/tile_on_move bool false
+ setprop xfwm4 /general/wrap_windows bool false
+ setprop thunar /misc-single-click bool true
+ setprop thunar /misc-single-click-timeout int 0
+ setprop thunar /misc-thumbnail-mode string NEVER
+ setprop thunar /last-icon-view-zoom-level string THUNAR_ZOOM_LEVEL_LARGE
+ setprop xfce4-session /general/SaveOnExit bool false
+ setprop xfce4-session /startup/screensaver/enabled bool false
+ setprop xfce4-desktop /desktop-icons/icon-size uint 64
+ setprop xfce4-panel /panels/panel-1/size uint 56
+ setprop xfce4-panel /panels/panel-1/icon-size uint 32
+ setprop xfce4-panel /panels/panel-1/position-locked bool true
+ setprop xfce4-panel /panels/panel-1/length uint 100
+ setprop xfce4-panel /panels/panel-1/autohide-behavior uint 0
+ setprop xfce4-panel /panels/panel-1/position string 'p=10;x=540;y=1880'
+ # Replace the default panel with launchers and a window list accessible by touch.
+ xfconf-query -c xfce4-panel -p /panels -n -a -t int -s 1
+ xfconf-query -c xfce4-panel -p /panels/panel-1/plugin-ids -n -a \
+  -t int -s 1 -t int -s 2 -t int -s 3 -t int -s 4 -t int -s 5 -t int -s 7 -t int -s 6
+ setprop xfce4-panel /plugins/plugin-1 string applicationsmenu
+ setprop xfce4-panel /plugins/plugin-2 string launcher
+ xfconf-query -c xfce4-panel -p /plugins/plugin-2/items -n -a -t string -s libra-keyboard.desktop
+ setprop xfce4-panel /plugins/plugin-3 string launcher
+ xfconf-query -c xfce4-panel -p /plugins/plugin-3/items -n -a -t string -s libra-terminal.desktop
+ setprop xfce4-panel /plugins/plugin-4 string windowmenu
+ setprop xfce4-panel /plugins/plugin-5 string launcher
+ xfconf-query -c xfce4-panel -p /plugins/plugin-5/items -n -a -t string -s libra-close.desktop
+ setprop xfce4-panel /plugins/plugin-6 string clock
+ setprop xfce4-panel /plugins/plugin-7 string systray
+ mkdir -p "${marker%/*}"
+ touch "$marker"
+ # The default second panel can remain alive after /panels changes at login.
+ # Reload the panel only on this first configuration pass.
+ xfce4-panel --restart
+fi
+gsettings set org.onboard.auto-show enabled false
+gsettings set org.onboard start-minimized true
+gsettings set org.onboard.window docking-enabled true
+gsettings set org.onboard.window docking-edge "'bottom'"
+gsettings set org.onboard.window docking-shrink-workarea true
+onboard > "$HOME/.cache/libra-onboard.log" 2>&1 &
+pgrep -x fcitx5 >/dev/null || fcitx5 -d
+/usr/local/bin/libra-maximize-windows &
+notify-send 'Libra 桌面' '下方按钮可开关屏幕键盘、切换和关闭窗口；窗口默认最大化。'

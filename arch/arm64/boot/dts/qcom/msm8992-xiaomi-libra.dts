@@ -71,6 +71,44 @@
 		};
 	};
 
+	/* External touch rails and power-down control from factory x11 DTS. */
+	touch_vdd: regulator-touch-vdd {
+		compatible = "regulator-fixed";
+		regulator-name = "ts_vreg";
+		regulator-min-microvolt = <3100000>;
+		regulator-max-microvolt = <3100000>;
+		gpio = <&tlmm 110 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+		startup-delay-us = <10000>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&touch_vdd_default>;
+	};
+
+	touch_vio: regulator-touch-vio {
+		compatible = "regulator-fixed";
+		regulator-name = "tp1v8_vreg";
+		regulator-min-microvolt = <1800000>;
+		regulator-max-microvolt = <1800000>;
+		gpio = <&pm8994_gpios 2 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+		startup-delay-us = <10000>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&touch_vio_default>;
+	};
+
+	regulator-touch-powerdown {
+		compatible = "regulator-fixed";
+		regulator-name = "tpwdn_vreg";
+		regulator-min-microvolt = <3100000>;
+		regulator-max-microvolt = <3100000>;
+		gpio = <&tlmm 96 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+		startup-delay-us = <5000>;
+		regulator-always-on;
+		pinctrl-names = "default";
+		pinctrl-0 = <&touch_powerdown_default>;
+	};
+
 	reserved-memory {
 		#address-cells = <2>;
 		#size-cells = <2>;
@@ -137,7 +175,27 @@
 &blsp1_i2c2 {
 	status = "okay";
 
-	/* Atmel or Synaptics touchscreen */
+	/* TWRP confirms Biel/Sharp Synaptics DSX at 0x70 with F01/F12. */
+	touchscreen@70 {
+		compatible = "syna,rmi4-i2c";
+		reg = <0x70>;
+		interrupt-parent = <&tlmm>;
+		interrupts = <61 IRQ_TYPE_LEVEL_LOW>;
+		reset-gpios = <&tlmm 60 GPIO_ACTIVE_LOW>;
+		vdd-supply = <&touch_vdd>;
+		vio-supply = <&touch_vio>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&touch_default>;
+		syna,startup-delay-ms = <5>;
+		syna,reset-delay-ms = <15>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		rmi4-f12@12 {
+			reg = <0x12>;
+			syna,sensor-type = <1>;
+		};
+	};
 };
 
 &CPU0 {
@@ -572,6 +630,27 @@
 };
 
 &tlmm {
+	touch_default: touch-state {
+		pins = "gpio60", "gpio61";
+		function = "gpio";
+		drive-strength = <16>;
+		bias-pull-up;
+	};
+
+	touch_vdd_default: touch-vdd-state {
+		pins = "gpio110";
+		function = "gpio";
+		drive-strength = <16>;
+		bias-pull-up;
+	};
+
+	touch_powerdown_default: touch-powerdown-state {
+		pins = "gpio96";
+		function = "gpio";
+		drive-strength = <16>;
+		bias-pull-up;
+	};
+
 	panel_reset_default: panel-reset-state {
 		pins = "gpio78";
 		function = "gpio";
@@ -581,6 +660,13 @@
 };
 
 &pm8994_gpios {
+	touch_vio_default: touch-vio-state {
+		pins = "gpio2";
+		function = "normal";
+		power-source = <2>;
+		bias-disable;
+	};
+
 	panel_enable_default: panel-enable-state {
 		pins = "gpio14";
 		function = "normal";

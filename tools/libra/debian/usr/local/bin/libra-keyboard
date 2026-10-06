@@ -1,0 +1,4 @@
+#!/bin/sh
+# Onboard's own D-Bus API reliably toggles its dock without losing focus.
+exec dbus-send --session --print-reply --type=method_call --dest=org.onboard.Onboard \
+ /org/onboard/Onboard/Keyboard org.onboard.Onboard.Keyboard.ToggleVisible

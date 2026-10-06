@@ -1,0 +1,13 @@
+[Unit]
+Description=Libra USB serial and NCM network
+After=sys-kernel-config.mount systemd-udev-trigger.service
+Requires=sys-kernel-config.mount
+Before=libra-drm.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/libra-usb-gadget
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

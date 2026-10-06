@@ -1,0 +1,15 @@
+#!/bin/sh
+# Complete idle-system acceptance metric, including kernel memory.
+set -eu
+awk '
+ /^MemTotal:/ {total=$2}
+ /^MemAvailable:/ {available=$2}
+ /^SwapTotal:/ {swap=$2}
+ /^SwapFree:/ {swapfree=$2}
+ END {
+  used=(total-available)*1024
+  printf "System used: %.0f bytes (%.1f MiB)\n", used, used/1048576
+  printf "Swap used: %.1f MiB\n", (swap-swapfree)/1024
+  printf "Requirement: < 1500000000 bytes; %s\n", used<1500000000 ? "PASS" : "FAIL"
+  exit used>=1500000000
+ }' /proc/meminfo

@@ -1,0 +1,15 @@
+#!/bin/sh
+# Maximize newly created ordinary application windows, leaving dialogs and OSK alone.
+seen=' '
+while :; do
+ for window in $(wmctrl -l | awk '{print $1}'); do
+  case "$seen" in *" $window "*) continue ;; esac
+  seen="$seen$window "
+  properties=$(xprop -id "$window" WM_CLASS _NET_WM_WINDOW_TYPE 2>/dev/null) || continue
+  case "$properties" in *Onboard*|*onboard*|*Xfce4-panel*|*xfdesktop*) continue ;; esac
+  case "$properties" in
+   *_NET_WM_WINDOW_TYPE_NORMAL*) wmctrl -ir "$window" -b add,maximized_vert,maximized_horz ;;
+  esac
+ done
+ sleep 2
+done

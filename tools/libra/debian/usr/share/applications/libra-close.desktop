@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Close window
+Name[zh_CN]=关闭窗口
+Exec=/usr/local/bin/libra-desktop-action close
+Icon=window-close
+Terminal=false
+Categories=Utility;

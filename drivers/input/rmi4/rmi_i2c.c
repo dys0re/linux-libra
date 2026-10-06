@@ -8,6 +8,7 @@
 #include <linux/rmi.h>
 #include <linux/of.h>
 #include <linux/delay.h>
+#include <linux/gpio/consumer.h>
 #include <linux/regulator/consumer.h>
 #include "rmi_driver.h"
 
@@ -26,6 +27,7 @@
  * @tx_buf_size: Size of the buffer
  *
  * @supplies: Array of voltage regulators
+ * @reset_gpio: Optional active-low hardware reset line
  * @startup_delay: Milliseconds to pause after powering up the regulators
  */
 struct rmi_i2c_xport {
@@ -39,6 +41,7 @@ struct rmi_i2c_xport {
 	size_t tx_buf_size;
 
 	struct regulator_bulk_data supplies[2];
+	struct gpio_desc *reset_gpio;
 	u32 startup_delay;
 };
 
@@ -235,6 +238,13 @@ static int rmi_i2c_probe(struct i2c_client *client)
 	if (error < 0)
 		return error;
 
+	/* Assert optional active-low RESET before enabling the touch supplies. */
+	rmi_i2c->reset_gpio = devm_gpiod_get_optional(&client->dev,
+						   "reset", GPIOD_OUT_HIGH);
+	if (IS_ERR(rmi_i2c->reset_gpio))
+		return dev_err_probe(&client->dev, PTR_ERR(rmi_i2c->reset_gpio),
+				     "Failed to get reset GPIO\n");
+
 	error = regulator_bulk_enable(ARRAY_SIZE(rmi_i2c->supplies),
 				       rmi_i2c->supplies);
 	if (error < 0)
@@ -250,6 +260,16 @@ static int rmi_i2c_probe(struct i2c_client *client)
 			     &rmi_i2c->startup_delay);
 
 	msleep(rmi_i2c->startup_delay);
+
+	if (rmi_i2c->reset_gpio) {
+		u32 delay = 100;
+
+		/* The supplies' startup delays also keep RESET asserted. */
+		gpiod_set_value_cansleep(rmi_i2c->reset_gpio, 0);
+		of_property_read_u32(client->dev.of_node,
+				    "syna,reset-delay-ms", &delay);
+		msleep(delay);
+	}
 
 	rmi_i2c->client = client;
 	mutex_init(&rmi_i2c->page_mutex);

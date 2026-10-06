@@ -1,0 +1,6 @@
+#!/bin/sh
+# A root-owned helper with a fixed backlight target and bounded numeric input.
+set -eu
+case "${1:-}" in ''|*[!0-9]*) echo 'Usage: libra-brightness 0..4095' >&2; exit 2 ;; esac
+[ "$1" -le 4095 ] || exit 2
+printf '%s\n' "$1" > /sys/class/backlight/backlight/brightness

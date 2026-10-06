@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Keyboard
+Name[zh_CN]=屏幕键盘
+Exec=/usr/local/bin/libra-keyboard
+Icon=input-keyboard
+Terminal=false
+Categories=Utility;Accessibility;

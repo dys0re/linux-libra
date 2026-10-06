@@ -1,0 +1,6 @@
+#!/bin/sh
+case "${1:-}" in
+ close) exec wmctrl -c :ACTIVE: ;;
+ desktop) exec wmctrl -k on ;;
+ *) echo 'Usage: libra-desktop-action close|desktop' >&2; exit 2 ;;
+esac
