@@ -138,6 +138,15 @@ config ARM_OMAP2PLUS_CPUFREQ
 	depends on ARCH_OMAP2PLUS || COMPILE_TEST
 	default ARCH_OMAP2PLUS
 
+config ARM_QCOM_MSM8992_CPUFREQ
+	bool "Qualcomm MSM8992 cluster DVFS"
+	depends on ARM64 && QCOM_MSM8992_CPU_OPS && MSM_CPU_8992 && QCOM_TSENS
+	depends on NVMEM && REGULATOR && PM
+	help
+	  Scale A53/A57 clocks through their factory frequency plans, using
+	  calibrated CPR open-loop voltages and shared CCI/APC0 votes.
+	  Requires valid temperature readings before registering cpufreq.
+
 config ARM_QCOM_CPUFREQ_NVMEM
 	tristate "Qualcomm nvmem based CPUFreq"
 	depends on ARCH_QCOM || COMPILE_TEST

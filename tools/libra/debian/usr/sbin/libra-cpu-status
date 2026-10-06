@@ -1,0 +1,22 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+# Read-only overview; cpufreq and clk_rate values use different units.
+set -eu
+for policy in /sys/devices/system/cpu/cpufreq/policy*; do
+	[ -d "$policy" ] || continue
+	printf '\n%s (frequency in kHz)\n' "${policy##*/}"
+	for key in affected_cpus scaling_driver scaling_governor scaling_available_frequencies scaling_min_freq scaling_max_freq scaling_cur_freq cpuinfo_cur_freq; do
+		[ -r "$policy/$key" ] || continue
+		printf '%s: %s\n' "$key" "$(cat "$policy/$key")"
+	done
+done
+printf '\nTemperature sensors (millidegrees Celsius)\n'
+for zone in /sys/class/thermal/thermal_zone*; do
+	[ -r "$zone/type" ] || continue
+	printf '%s: %s\n' "$(cat "$zone/type")" "$(cat "$zone/temp")"
+done
+printf '\nCooling devices\n'
+for cooling in /sys/class/thermal/cooling_device*; do
+	[ -r "$cooling/type" ] || continue
+	printf '%s: state %s/%s\n' "$(cat "$cooling/type")" "$(cat "$cooling/cur_state")" "$(cat "$cooling/max_state")"
+done

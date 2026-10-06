@@ -108,6 +108,74 @@
 		};
 	};
 
+	cpu_clk: clock-controller@f9015000 {
+		compatible = "qcom,msm8992-cpu-clock";
+		reg = <0xf9015000 0x1000>, <0xf9016000 0x1000>,
+		      <0xf900d000 0x1000>, <0xf900f000 0x1000>,
+		      <0xf9011000 0x1000>, <0xf9112000 0x1000>;
+		reg-names = "a53-pll", "a57-pll", "a53-mux", "a57-mux",
+			    "cci-pll", "cci-mux";
+		clocks = <&cpu_aux_clk>, <&xo_board>;
+		clock-names = "aux", "xo";
+		power-domains = <&rpmpd MSM8994_VDDMX_AO>;
+		#clock-cells = <1>;
+		status = "disabled";
+	};
+
+	apc0_saw: syscon@f9065000 {
+		compatible = "qcom,msm8992-saw-vctl", "syscon";
+		reg = <0xf9065000 0x1000>;
+		qcom,saw2-spm-dly = <0x3c100c00>;
+	};
+
+	apc1_saw: syscon@f9013000 {
+		compatible = "qcom,msm8992-saw-vctl", "syscon";
+		reg = <0xf9013000 0x1000>;
+		qcom,saw2-spm-dly = <0x3c100c30>;
+	};
+
+	qfprom: efuse@fc4bc000 {
+		compatible = "qcom,qfprom";
+		reg = <0xfc4bc000 0x1000>;
+		#address-cells = <1>;
+		#size-cells = <1>;
+		read-only;
+		cpr_row62: cpr-row@1f0 { reg = <0x1f0 8>; };
+		cpr_row137: cpr-row@448 { reg = <0x448 8>; };
+		cpr_row22: cpr-row@b0 { reg = <0xb0 8>; };
+		cpr_row138: cpr-row@450 { reg = <0x450 8>; };
+		cpr_row139: cpr-row@458 { reg = <0x458 8>; };
+		cpr_row140: cpr-row@460 { reg = <0x460 8>; };
+		cpr_row56: cpr-row@1c0 { reg = <0x1c0 8>; };
+		cpr_row57: cpr-row@1c8 { reg = <0x1c8 8>; };
+		cpr_row136: cpr-row@440 { reg = <0x440 8>; };
+
+		tsens_calib: tsens-calib@d0 { reg = <0xd0 0xc>; };
+		tsens_backup: tsens-backup@1c0 { reg = <0x1c0 0x288>; };
+		tsens_select: tsens-select@464 { reg = <0x464 4>; };
+	};
+
+	cpu_qfprom: efuse@fc4b8000 {
+		compatible = "qcom,qfprom";
+		reg = <0xfc4b8000 0x1000>;
+		#address-cells = <1>;
+		#size-cells = <1>;
+		read-only;
+		cpu_speedbin: speedbin@b0 { reg = <0xb0 8>; };
+	};
+
+	tsens: thermal-sensor@fc4a9000 {
+		compatible = "qcom,msm8992-tsens";
+		reg = <0xfc4a9000 0x1000>, <0xfc4a8000 0x1000>;
+		interrupts = <GIC_SPI 184 IRQ_TYPE_LEVEL_HIGH>;
+		interrupt-names = "uplow";
+		nvmem-cells = <&tsens_calib>, <&tsens_backup>, <&tsens_select>;
+		nvmem-cell-names = "calib", "calib-backup", "calib-select";
+		#thermal-sensor-cells = <1>;
+		#qcom,sensors = <13>;
+		status = "disabled";
+	};
+
 	cpu_power: power-controller@f900d000 {
 		compatible = "qcom,msm8992-cpu-power";
 		reg = <0xf900d000 0x1000>, <0xf900f000 0x1000>,

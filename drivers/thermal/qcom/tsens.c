@@ -22,6 +22,14 @@
 #include "../thermal_hwmon.h"
 #include "tsens.h"
 
+/* MSM8992 probing is manual until its first real sensor samples are validated. */
+static bool msm8992_probe;
+module_param(msm8992_probe, bool, 0600);
+MODULE_PARM_DESC(msm8992_probe, "Allow MSM8992 TSENS probe (manual bring-up)");
+static bool msm8992_observe;
+module_param(msm8992_observe, bool, 0400);
+MODULE_PARM_DESC(msm8992_observe, "Read MSM8992 TSENS calibration/samples without hardware writes");
+
 /**
  * struct tsens_irq_data - IRQ status and temperature violations
  * @up_viol:        upper threshold violated
@@ -898,6 +906,38 @@ static int dbg_version_show(struct seq_file *s, void *data)
 DEFINE_SHOW_ATTRIBUTE(dbg_version);
 DEFINE_SHOW_ATTRIBUTE(dbg_sensors);
 
+static int dbg_readings_show(struct seq_file *seq, void *data)
+{
+	struct platform_device *pdev = seq->private;
+	struct tsens_priv *priv = platform_get_drvdata(pdev);
+	u32 control, ready, status;
+	int i, ret;
+
+	ret = regmap_read(priv->srot_map, 4, &control);
+	if (ret)
+		return ret;
+	ret = regmap_read(priv->tm_map, 0x84, &ready);
+	if (ret)
+		return ret;
+	seq_printf(seq, "SROT+4=0x%08x TM+84=0x%08x\n", control, ready);
+	seq_puts(seq, "hw_id raw_status valid temperature_mC\n");
+	for (i = 0; i < priv->num_sensors; i++) {
+		const struct tsens_sensor *sensor = &priv->sensor[i];
+		unsigned int field = LAST_TEMP_0 + sensor->hw_id;
+
+		ret = regmap_read(priv->tm_map, priv->fields[field].reg, &status);
+		if (ret)
+			return ret;
+		if (status & BIT(14))
+			seq_printf(seq, "%u 0x%08x 1 %d\n", sensor->hw_id, status,
+				   tsens_hw_to_mC(sensor, status & 0x3ff));
+		else
+			seq_printf(seq, "%u 0x%08x 0 unavailable\n", sensor->hw_id, status);
+	}
+	return 0;
+}
+DEFINE_SHOW_ATTRIBUTE(dbg_readings);
+
 static void tsens_debug_init(struct platform_device *pdev)
 {
 	struct tsens_priv *priv = platform_get_drvdata(pdev);
@@ -910,6 +950,8 @@ static void tsens_debug_init(struct platform_device *pdev)
 	priv->debug = debugfs_create_dir(dev_name(&pdev->dev), priv->debug_root);
 	debugfs_create_file("version", 0444, priv->debug, pdev, &dbg_version_fops);
 	debugfs_create_file("sensors", 0444, priv->debug, pdev, &dbg_sensors_fops);
+	if (priv->observation_only)
+		debugfs_create_file("readings", 0444, priv->debug, pdev, &dbg_readings_fops);
 }
 #else
 static inline void tsens_debug_init(struct platform_device *pdev) {}
@@ -929,7 +971,7 @@ static const struct regmap_config tsens_srot_config = {
 	.reg_stride	= 4,
 };
 
-int __init init_common(struct tsens_priv *priv)
+int init_common(struct tsens_priv *priv)
 {
 	void __iomem *tm_base, *srot_base;
 	struct device *dev = priv->dev;
@@ -1105,7 +1147,7 @@ int __init init_common(struct tsens_priv *priv)
 	spin_lock_init(&priv->ul_lock);
 
 	/* VER_0 interrupt doesn't need to be enabled */
-	if (tsens_version(priv) >= VER_0_1)
+	if (tsens_version(priv) >= VER_0_1 && !priv->observation_only)
 		tsens_enable_irq(priv);
 
 err_put_device:
@@ -1180,6 +1222,9 @@ static const struct of_device_id tsens_table[] = {
 	}, {
 		.compatible = "qcom,msm8976-tsens",
 		.data = &data_8976,
+	}, {
+		.compatible = "qcom,msm8992-tsens",
+		.data = &data_8992,
 	}, {
 		.compatible = "qcom,msm8996-tsens",
 		.data = &data_8996,
@@ -1341,6 +1386,11 @@ static int tsens_probe(struct platform_device *pdev)
 	else
 		data = &data_8960;
 
+	if (data == &data_8992 && !msm8992_probe) {
+		dev_info(dev, "MSM8992 TSENS held for manual probe\n");
+		return -ENODEV;
+	}
+
 	num_sensors = data->num_sensors;
 
 	if (np)
@@ -1360,7 +1410,9 @@ static int tsens_probe(struct platform_device *pdev)
 	priv->dev = dev;
 	priv->num_sensors = num_sensors;
 	priv->ops = data->ops;
+	priv->observation_only = data == &data_8992 && msm8992_observe;
 	for (i = 0;  i < priv->num_sensors; i++) {
+		priv->sensor[i].priv = priv;
 		if (data->hw_ids)
 			priv->sensor[i].hw_id = data->hw_ids[i];
 		else
@@ -1374,6 +1426,8 @@ static int tsens_probe(struct platform_device *pdev)
 	if (!priv->ops || !priv->ops->init || !priv->ops->get_temp)
 		return -EINVAL;
 
+	if (priv->observation_only)
+		dev_info(dev, "MSM8992 TSENS observation: mapping/reading controller\n");
 	ret = priv->ops->init(priv);
 	if (ret < 0) {
 		dev_err(dev, "%s: init failed\n", __func__);
@@ -1381,15 +1435,24 @@ static int tsens_probe(struct platform_device *pdev)
 	}
 
 	if (priv->ops->calibrate) {
+		if (priv->observation_only)
+			dev_info(dev, "MSM8992 TSENS observation: reading calibration\n");
 		ret = priv->ops->calibrate(priv);
 		if (ret < 0)
 			return dev_err_probe(dev, ret, "%s: calibration failed\n",
 					     __func__);
 	}
+	if (priv->observation_only) {
+		tsens_debug_init(pdev);
+		dev_info(dev, "MSM8992 TSENS observation ready; no IRQ/thermal-zone writes\n");
+		return 0;
+	}
 
 	ret = tsens_register(priv);
 	if (!ret)
 		tsens_debug_init(pdev);
+	if (!ret && data == &data_8992)
+		dev_info(dev, "MSM8992 TSENS ready: 13 calibrated zones with IRQs and thermal trips\n");
 
 	return ret;
 }
@@ -1399,7 +1462,8 @@ static void tsens_remove(struct platform_device *pdev)
 	struct tsens_priv *priv = platform_get_drvdata(pdev);
 
 	debugfs_remove_recursive(priv->debug_root);
-	tsens_disable_irq(priv);
+	if (!priv->observation_only)
+		tsens_disable_irq(priv);
 	if (priv->ops->disable)
 		priv->ops->disable(priv);
 }

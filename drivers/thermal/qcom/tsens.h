@@ -565,6 +565,7 @@ struct tsens_context {
  * @ops: pointer to list of callbacks supported by this device
  * @debug_root: pointer to debugfs dentry for all tsens
  * @debug: pointer to debugfs dentry for tsens controller
+ * @observation_only: read calibration/samples without IRQ or thermal-zone setup
  * @sensor: list of sensors attached to this device
  */
 struct tsens_priv {
@@ -585,6 +586,7 @@ struct tsens_priv {
 
 	struct dentry			*debug_root;
 	struct dentry			*debug;
+	bool				observation_only;
 
 	struct tsens_sensor		sensor[] __counted_by(num_sensors);
 };
@@ -645,7 +647,7 @@ int tsens_resume_common(struct tsens_priv *priv);
 extern struct tsens_plat_data data_8960;
 
 /* TSENS v0.1 targets */
-extern struct tsens_plat_data data_8226, data_8909, data_8916, data_8939, data_8974, data_9607;
+extern struct tsens_plat_data data_8226, data_8909, data_8916, data_8939, data_8974, data_8992, data_9607;
 
 /* TSENS v1 targets */
 extern struct tsens_plat_data data_tsens_v1, data_8937, data_8976, data_8956;

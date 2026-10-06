@@ -49,6 +49,20 @@ Internet access over USB requires host-side routing/NAT or connection sharing.
 The phone's USB default route points to 192.168.7.1. USB setup precedes native
 display handover, and serial/network access does not depend on LightDM.
 
+For Windows Internet Connection Sharing, copy
+``scripts/libra-usb-windows-ics.sh`` to the installed phone and run it with
+sudo. It disables the phone's DHCP server and persistently adds
+``192.168.137.2/24``, default gateway ``192.168.137.1`` and DNS. It keeps the
+original 192.168.7.2 address and does not rebind the USB gadget. In Windows,
+enable sharing on the Internet-connected adapter and select the phone's USB
+NCM adapter as the destination. SSH then uses ``libra@192.168.137.2``.
+
+``etc/sysctl.d/60-libra-ping.conf`` enables unprivileged ICMP echo sockets,
+allowing the desktop user to run ordinary ping without setuid or raw-socket
+capabilities. The Windows setup script applies this setting immediately to
+existing installations. A gateway that does not answer ping is not sufficient
+evidence of failed sharing; also test an external IP and an HTTPS request.
+
 The X server uses the MSM KMS device with software 2D rendering; OpenGL uses
 llvmpipe. Xfwm compositing is disabled. GTK and Qt scaling defaults to 200%,
 with large decorations, icons and panel buttons. The panel includes a keyboard
@@ -102,6 +116,297 @@ The acceptance limit is strictly below 1,500,000,000 bytes using
 ``MemTotal - MemAvailable``, including kernel memory. Swap is reported
 separately. The user has booted the desktop and confirmed working touchscreen
 input on the phone. Repeated-boot reliability remains to be measured.
+
+CPU frequency and temperature support
+-------------------------------------
+
+The current delivery enables standard cpufreq policies, schedutil load-based
+scaling and the calibrated TSENS thermal zones automatically. A53 can select
+the chip's factory speed-bin plan (up to 1.44 GHz on the tested speedbin1
+handset); the A57 table includes up to 1.824 GHz. Thermal polling/IRQs and CPU cooling
+use the factory 60-degree passive threshold, 10-degree hysteresis and
+115-degree critical limit. Automatic DVFS activation requires valid readings
+from shared sensor7, A53 sensors9/10 and A57 sensors13/14.
+
+The CPU PLL /4 and /2 paths, auxiliary return, CCI 300/384 MHz transition
+and both SAW supply paths have been exercised on this handset. Automatic
+policy activation and A53's reported 1.44 GHz have been confirmed. A57's
+highest operating point and sustained-load thermal throttling remain
+unconfirmed. The previous CCI-tested boot is preserved
+in ``build/verified-libra-cci-test``. There is no need to run manual probe or
+debugfs test commands on the current automatic image. Use cpufreq and thermal
+sysfs to verify its operation. Userspace/powersave governors remain available.
+
+The full source DTB retains power-domain attachments. The factory PLL digital
+NOMINAL corner5 is encoded as RPM/GENPD level4; the factory maximum MX corner7
+is encoded as level6. The older OEM regulator API offsets corner values by1.
+Voltage votes precede frequency increases and follow frequency decreases;
+actual CPU rates are sampled for coordination rather than relying on cached
+requests. Failed CCI reconfiguration attempts to restore its previous rate.
+If restoration fails, CPUs and CCI attempt to return to the verified
+600/600/300 MHz auxiliary clocks while retaining the higher supply votes.
+
+Rebuild only the delivered boot with ``sh scripts/build-debian-boot.sh --boot-only``.
+This leaves the installed/sparse userdata image unchanged. Effective config
+now selects ``CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=y``. The installed MSM
+module's code, data, relocations and symbol ABI remain unchanged; rebuilt
+module differences are confined to private ``__UNIQUE_ID`` string counters.
+
+The user booted the automatic image and confirmed the TSENS-ready/cpufreq-ready
+messages, schedutil and an A53 policy reporting 1.44 GHz. Only one policy was
+listed: the driver had selected the cluster mask before calling
+``cpufreq_generic_init()``, whose actual implementation marks all CPUs as
+shared. Policy initialization now runs the generic helper first, clears its
+mask and then sets CPUs0--3 for A53 or CPUs4--5 for A57. An executable regression
+uses the real generic helper and driver initializer for each possible CPU,
+reproduces the former overwrite and verifies separate masks/clocks/tables.
+The corrected boot should expose policy0 and policy4 independently; its A57
+automatic policy and highest operating points await phone confirmation.
+
+The user confirmed the corrected split: policy0 contains CPUs0--3 and policy4
+CPUs4--5, with schedutil on both. Policy0 reported a 1.44 GHz limit/current
+rate; policy4 reported a 1.6896 GHz limit and 1.344 GHz current rate. This
+confirms the two automatic policies, but does not establish why A57's reported
+limit is below the table's 1.824 GHz maximum. Temperature/cooling-state checks
+and sustained-load/throttling validation were deferred at the user's request.
+No thermal-limit adjustment was made from that observation.
+
+Hardware validation is incomplete. The first corrected all-at-boot DVFS image
+caused a whole-device reboot before userdata was mounted. No pstore or
+persistent kernel journal was recovered, so the trigger is not yet isolated.
+CPU/CCI clock probing, TSENS probing and DVFS activation now require separate
+manual opt-ins during isolation. The observation images expose manually gated clock and
+voltage readers, omits their power-domain attachment, and keeps CPU clock
+references on the auxiliary source. It holds all six CPUs at the verified
+600 MHz boot path.
+
+The observation kernel uses ``qcom_tsens.msm8992_observe=1`` with the manual
+probe flag initially disabled. After a stable boot, enabling
+``/sys/module/qcom_tsens/parameters/msm8992_probe`` and probing
+``fc4a9000.thermal-sensor`` only maps/reads the controller and calibration.
+It does not register IRQs, thermal zones or program thresholds. Valid raw ADC
+samples and converted temperatures are available at
+``/sys/kernel/debug/tsens/fc4a9000.thermal-sensor/readings``. The common init
+helper remains in normal kernel text, so deferred/manual probes cannot call
+discarded ``__init`` memory. Observation mode does not validate frequency
+transitions or demonstrate working thermal throttling.
+
+The user verified manual TSENS observation on 2026-10-07: all 13 samples had
+VALID set and converted to 34--41 degrees Celsius. Primary calibration mode
+was 3, with base1=545 and base2=851. This validates basic calibrated readings,
+not throttling or temperature accuracy against an external reference.
+
+The next observation DTB, built using
+``scripts/prepare-libra-thermal-observe-dtb.py --clocks``, exposes manual
+cluster/CCI clock probing while CPU clock references remain on GPLL0 and the
+cpufreq node remains disabled. Its clock node omits the power-domain property
+to exclude implicit platform power-on during device attachment. With
+``clk_cpu_msm8992.clocks_observe=1``, clock objects contain only recalc callbacks,
+without critical-enable flags, supply votes or clock-set callbacks. Manual
+``clusters_probe`` activation is used to isolate register mapping/readback and
+CCI secure reads before introducing voltage or frequency transitions.
+
+The user verified this clock observation on 2026-10-07: A53 and A57 both
+read 600 MHz, and CCI reads 300 MHz. The PMIC reports 1,000,000 uV for both
+S8/APC0 and S11/APC1. These are reported setpoints, not independent physical
+voltage measurements.
+
+The voltage diagnostic DTB uses ``--voltages``. With
+``qcom_msm8992_cpufreq.observe=1``, manual driver activation reads the factory
+CPR fuse plan and exposes ``/sys/kernel/debug/libra_voltage_observe``. It returns
+before power votes, CPR programming or cpufreq registration. SAW state is read
+from the factory controllers: APC0 uses the system/CCI SAW at 0xf9065000 and
+APC1 uses the cluster1 SAW at 0xf9013000. This diagnostic does not activate the
+SAW voltage setter until an explicit manual test request.
+
+Factory ``spm-regulator.c`` routes S8 voltage requests through SAW on CPU0 and
+S11 requests through SAW on CPU4; S9/S10 are slave phases. The port-0 request
+updates VSET without changing the active PMIC range, and waits for the PMIC
+acknowledgment. The regulator backend now supports separate SAW controllers
+and CPU affinity for these requests. The current test DT wires S8 to CPU0's
+system/CCI SAW and S11 to CPU4's L2 SAW; S9/S10 remain slave phases.
+The previous experimental implementation used ordinary SPMI voltage setting.
+That differs from the factory route, but has not been established as the cause
+of the reset.
+
+The user confirmed another whole-device reset during the combined manual
+clock/voltage observation command on 2026-10-07. No final stage marker was
+captured, so the triggering operation is unknown. The public boot was restored
+to the verified clock observation image (SHA256 starting ``67ee837b85f5``).
+The new voltage image's contiguous 0x500-byte fuse read differed from the
+factory's selected-row access. Source now reads individual 8-byte cells:
+selector row62 first, revision row137 and speed-bin row22, then primary
+rows138--140 or redundant rows56/57/136. Unrelated rows and the unused bank
+are skipped. Executable provider tests reject any unrelated read and verify
+that read errors stop access. This correction has not yet been tested on the
+phone and is not identified as the proven reset cause.
+
+The user then reprobed the restored clock observation image successfully.
+Attempting to probe ``f9019000.cpufreq`` returned an I/O error because that
+image disables the cpufreq DT node. This is an expected failure of the combined
+command, not a successful voltage probe. The public boot is now the corrected
+selected-row observation image (SHA256 starting ``35679a91a088``). Validate
+clock registration first, then run a separate logged cpufreq observation probe
+to capture calibration and calculated voltage plans. Defer reading the SAW
+debugfs report until that probe has been confirmed stable.
+
+The user confirmed both separate probes on this image. Corrected rows62,
+137,22,138,139,140 and the raw speed-bin row were read successfully. APC0
+is speedbin1/revision4/primary, with calculated top corner 1.44 GHz at
+1,150,000 uV. APC1 is speedbin0/revision4/primary, with calculated top corner
+1.824 GHz at 1,110,000 uV. The observation probe returned successfully after
+mapping both SAW controllers. These are calibrated target voltage plans;
+neither actual frequency transitions nor SAW register readback have yet been
+validated. The verified boot and supplied voltage plans are preserved in
+``build/verified-libra-cpr-observe``.
+
+The user subsequently read both SAW banks without a reset. CPU rates remain
+600/600 MHz and CCI 300 MHz; both PMIC setpoints are 1,000,000 uV. APC0's
+PMIC_STS, VCTL, AVS_CTL and PMIC_DATA_3 were zero. APC1 reported PMIC_STS=0xb8,
+VCTL=0x00030080, AVS_CTL=0 and PMIC_DATA_3=0. The 0xb8 status matches the PMIC
+range0 encoding for 1,000,000 uV. A zero command/status bank alone does not
+establish whether a controller is configured for voltage changes. Both SAW
+addresses and CPU lists were compared against the selected factory DTB.
+The latest report adds read-only CFG, SPM_CTL, SPM_DLY, PMIC_DATA_0--2 and
+VERSION registers to check the factory configuration before any voltage write.
+
+Both extended reports showed SAW v3.0, CFG=0, SPM_CTL=0, SPM_DLY=0 and
+PMIC_DATA_0--3=0. Factory voltage-command configuration is now applied lazily
+on the first manual voltage request: CFG=1, delay=0x3c100c00 (A53) or
+0x3c100c30 (A57), PMIC_DATA_0=0x00030000 and PMIC_DATA_1=0x02030080.
+The setter verifies v3.0 and PMIC-arbiter presence before setup, runs on
+CPU0/CPU4, and preserves sleep sequencing. Setup failures do not issue a
+voltage command. This does not add idle or suspend support.
+
+The test boot keeps clock observation and cpufreq observation enabled, and
+adds ``qcom_msm8992_cpufreq.saw_test=1``. A root write of cluster index 0 or 1
+to ``/sys/kernel/debug/libra_saw_voltage_test`` explicitly requests a
+1,000,000 -> 1,005,000 -> 1,000,000 uV pulse on that rail. Both CPU clusters
+must still read 600 MHz and CCI 300 MHz, and the selected rail must report
+1,000,000 uV before starting. PMIC readback is checked after each request.
+On error the test stops; if restoring the baseline fails, the raised voltage
+is retained. No CPU/CCI rate change or cpufreq policy registration occurs.
+The driver still does not write voltage/configuration during boot or the
+manual observation probe. The pulse and lazy SAW setup have host executable
+tests but are awaiting phone validation. Test A53 first, then A57 separately.
+
+The user verified both voltage pulses on the phone: each reported 1,005,000 uV
+after the upward request and 1,000,000 uV after restoring the baseline. Both
+SAW banks now read CFG=1, their factory delay values, PMIC_STS/VCTL/DATA_3=0xb8
+and the factory DATA_0/1 values. No CPU frequency transition was involved.
+This verifies the two small SAW-controlled transitions, not the complete DVFS
+range or regulation accuracy measured externally.
+
+The current clock-test image adds ``clk_cpu_msm8992.clocks_test=1`` and
+``qcom_msm8992_cpufreq.clock_test=1``. Manual CPU clock callbacks are enabled
+without critical clock flags or automatic power/rate changes at registration;
+CCI remains read-only. Root writes in Hz to ``libra_a53_clock_test`` or
+``libra_a57_clock_test`` select a persistent CPU rate. A53 initially supports
+384/460.8/600/672 MHz, and A57 384/480/600 MHz. Both supplies must report
+1,000,000 uV and CCI 300 MHz. The selected rate must occur in the factory
+clock plan, fit its calibrated voltage including the transient 600 MHz path,
+and require no more CCI bandwidth than the existing 300 MHz rate. Failed
+PLL locking leaves the CPU on the auxiliary 600 MHz source; actual clock
+readback is checked and failures are returned. This stage validates PLL/mux
+switching before CCI rate changes, full cpufreq policies and thermal throttling.
+The boot still starts at 600 MHz and does not automatically select a faster rate.
+
+The user verified A53 600 -> 384 -> 600 -> 672 MHz and A57 600 -> 384 ->
+480 -> 600 MHz. All callbacks returned zero and hardware readback matched
+each requested rate. CPU PLL main /4 and /2 paths, and auxiliary return,
+have thus been exercised on both clusters; early outputs and higher rates
+remain untested. The verified boot is preserved in
+``build/verified-libra-cpu-clock-test``.
+
+The current test boot exposes ``libra_cci_clock_test`` with both provider and
+consumer ``cci_test=1`` parameters. Root requests can select 300 or 384 MHz
+while both CPUs remain at 600 MHz and APC0 reports 1,000,000 uV. The target
+must fit the calibrated APC0/CCI voltage plan. Readback is checked; failed
+PLL/mux requests attempt to restore the boot auxiliary 300 MHz CCI rate.
+The original error is still returned and recovery results are logged. CPU
+bootstrap requests can operate with CCI at either 300 or 384 MHz, still
+within their existing frequency limits and the factory CCI mapping. The
+CCI transition is awaiting phone validation. Automatic cpufreq policies and
+thermal-zone activation remain disabled in this test boot.
+
+The experimental full DVFS implementation adds built-in MSM8992 TSENS calibration,
+cluster/CCI clocks and a dedicated cpufreq driver. The four A53 CPUs share
+policy0 (384 MHz up to 1.248 GHz for speedbin0, or 1.44 GHz for speedbin1).
+The two A57 CPUs share policy4 (384 MHz up to 1.824 GHz). During validation,
+the default governor was userspace; schedutil was built but not selected
+automatically. The A57 policy also includes its 600 MHz auxiliary boot point,
+so policy registration cannot force an immediate move to 633.6 MHz merely
+because the initial rate was absent from the table. CPU cooling can limit the
+policies when hot. The factory frequency plans are selected from the chip's
+speed-bin fuse.
+
+APC voltages come from the factory CPR open-loop calculation: primary or
+redundant per-corner fuses, revision/RO matching, signed voltage adjustments,
+capped interpolation, 5 mV rounding and per-corner voltage limits. The copied
+constant tables are tested against the selected factory DTB. Autonomous CPR
+loops are disabled; closed-loop adaptive voltage reduction is not implemented.
+CPU hot-unplug, deep idle and system suspend remain unsupported.
+
+PLL0 is reprogrammed only while its cluster runs on the existing 600 MHz
+GPLL0 auxiliary path. Its main /4, main /2 and early outputs cover the factory
+1209.6--1996.8 MHz VCO range. The MSM8992/v2 settings and lock delays are
+preserved. Lock failure leaves the cluster on GPLL0 and returns an error.
+
+CCI follows the maximum requirement of both clusters using the factory
+CPU-to-CCI maps. Its secure mux is accessed through SCM. A53 and CCI share
+APC0, so lowering A53 frequency cannot lower its voltage below CCI's demand
+while A57 is fast. Supplies are raised before clocks; clocks are lowered
+before supplies. Both supplies also cover the transient 600 MHz CPU auxiliary
+source. CCI reconfiguration uses its 150 MHz auxiliary path. An unsuccessful
+transition retains excess voltage rather than undervolting an active clock.
+RPM VDDMX receives the factory maximum corner vote; existing maximum BIMC/NoC
+handoff votes are retained. Dynamic interconnect bandwidth scaling is not
+implemented by this change.
+
+The cpufreq driver registers only after the calibrated TSENS zone is available
+and can return a temperature. Calibration failures leave the original 600 MHz
+boot path available, without enabling the high-frequency policies.
+
+The driver uses factory physical sensor IDs 0--5, 7, 9--14 and decodes the
+chip's primary or backup two-point calibration. Primary offsets are packed
+by software index; backup offsets use hardware sensor IDs. Backup base bit 0
+and offset-5 bit 3 are assembled at their named bit positions; the old OEM C
+implementation omitted those destination shifts. Unsupported calibration
+modes fail probe rather than using synthetic 532-code temperatures.
+Sensor control/calibration fuses are not rewritten. The enabled TSENS control
+state is inherited from firmware, as in the factory type-2 implementation.
+The type-2 control register is SROT + 0x4, matching the Qualcomm 1xxx
+layout. SROT + 0x0 is not the enable register. The A53 mux bank is shared
+with the existing APCS IPC mailbox: mailbox writes use +0x8, clock mux
+writes use +0x54. Its mapping is shared rather than claiming the mailbox's
+region a second time. The A57 bank retains an exclusive resource mapping.
+
+All 13 zones poll every 250 ms. CPU sensor7 limits both clusters; sensors9/10
+also limit A53, and sensors13/14 limit A57. Passive throttling starts at
+60 degrees Celsius with 10 degrees hysteresis. The emergency limit remains
+115 degrees, matching the selected factory DTB. These are chip temperatures,
+not surface temperatures. Primary/backup decoding and clock/voltage failure paths
+have host-side executable tests and compiled DT comparisons; actual sensor
+readings, transitions and thermal throttling still require phone validation.
+
+The diagnostic helper ``tools/libra/debian/usr/sbin/libra-cpu-status`` reports
+policies, current rates, temperatures and cooling states without changing
+anything. New rootfs builds include it. Existing userdata can instead use::
+
+  cat /sys/devices/system/cpu/cpufreq/policy*/scaling_available_frequencies
+  cat /sys/devices/system/cpu/cpufreq/policy*/scaling_cur_freq
+  for z in /sys/class/thermal/thermal_zone*; do
+      cat "$z/type" "$z/temp"
+  done
+
+Cpufreq sysfs uses kHz; thermal sysfs uses millidegrees Celsius. Cluster clock
+debugfs ``msm8992_a53/clk_rate`` and ``msm8992_a57/clk_rate`` read back the
+actual mux/PLL settings in Hz; the auxiliary clock alone is no longer the
+current CPU rate. The boot retains kernel release 6.12.112+ and the installed
+display module load image/relocations are unchanged, so existing userdata
+can test this boot without replacing modules or reflashing the filesystem.
+For the diagnostic variant, validate with
+``python3 scripts/check-debian-images.py --boot-only --dtb build/libra-voltage-observe.dtb``.
 
 Rebuild
 -------

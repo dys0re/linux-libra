@@ -1,0 +1,95 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/cpufreq/qcom,msm8992-cpufreq.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: Qualcomm MSM8992 CPU and shared CCI voltage/frequency coordination
+
+maintainers:
+  - Konrad Dybcio <konradybcio@kernel.org>
+
+description: |
+  Factory frequency plans and calibrated CPR open-loop voltages for the
+  A53/A57 clusters. The CCI shares the A53 APC supply. Temperature sensing
+  must be available before frequency scaling is enabled. Calibration data
+  is read-only; this binding does not enable closed-loop CPR adaptation.
+
+properties:
+  compatible:
+    const: qcom,msm8992-cpufreq
+
+  reg:
+    items:
+      - description: A53 CPR control registers
+      - description: A57 CPR control registers
+
+  clocks:
+    items:
+      - description: A53 cluster clock
+      - description: A57 cluster clock
+      - description: Shared CCI clock
+
+  clock-names:
+    items:
+      - const: a53
+      - const: a57
+      - const: cci
+
+  apc0-supply:
+    description: A53 and CCI supply
+
+  apc1-supply:
+    description: A57 supply
+
+  qcom,saw-regs:
+    description: SAW voltage-controller register banks for A53/CCI and A57
+    $ref: /schemas/types.yaml#/definitions/phandle-array
+    items:
+      - items:
+          - description: A53/CCI SAW controller
+      - items:
+          - description: A57 SAW controller
+
+  power-domains:
+    maxItems: 1
+    description: RPM VDDMX always-on domain
+
+  nvmem-cells:
+    items:
+      - description: Corrected QFPROM row 62 used by factory CPR
+      - description: Corrected QFPROM row 137 used by factory CPR
+      - description: Corrected QFPROM row 22 used by factory CPR
+      - description: Corrected QFPROM row 138 used by factory CPR
+      - description: Corrected QFPROM row 139 used by factory CPR
+      - description: Corrected QFPROM row 140 used by factory CPR
+      - description: Corrected QFPROM row 56 used by factory CPR
+      - description: Corrected QFPROM row 57 used by factory CPR
+      - description: Corrected QFPROM row 136 used by factory CPR
+      - description: Raw A53 speed-bin row used by the factory clock driver
+
+  nvmem-cell-names:
+    items:
+      - const: cpr-row62
+      - const: cpr-row137
+      - const: cpr-row22
+      - const: cpr-row138
+      - const: cpr-row139
+      - const: cpr-row140
+      - const: cpr-row56
+      - const: cpr-row57
+      - const: cpr-row136
+      - const: speedbin
+
+required:
+  - compatible
+  - reg
+  - clocks
+  - clock-names
+  - apc0-supply
+  - apc1-supply
+  - power-domains
+  - nvmem-cells
+  - nvmem-cell-names
+
+additionalProperties: false

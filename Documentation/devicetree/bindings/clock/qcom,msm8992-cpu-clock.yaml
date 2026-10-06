@@ -1,0 +1,69 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/clock/qcom,msm8992-cpu-clock.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: Qualcomm MSM8992 cluster clocks
+
+maintainers:
+  - Konrad Dybcio <konradybcio@kernel.org>
+
+description: |
+  Two cluster clocks for the four Cortex-A53 and two Cortex-A57 CPUs.
+  Registers and PLL sequencing follow the MSM8992 factory implementation.
+  Low frequency operating points use PLL0 main output or the existing
+  600 MHz GPLL0 auxiliary source; high frequencies use PLL0 early output.
+  The third output is the CCI clock. APC voltage coordination is handled
+  by the companion MSM8992 cpufreq driver using CPR fuse calibration.
+
+properties:
+  compatible:
+    const: qcom,msm8992-cpu-clock
+
+  reg:
+    items:
+      - description: A53 PLLs
+      - description: A57 PLLs
+      - description: A53 cluster mux
+      - description: A57 cluster mux
+      - description: CCI PLL
+      - description: CCI secure mux
+
+  reg-names:
+    items:
+      - const: a53-pll
+      - const: a57-pll
+      - const: a53-mux
+      - const: a57-mux
+      - const: cci-pll
+      - const: cci-mux
+
+  clocks:
+    items:
+      - description: GPLL0 auxiliary clock
+      - description: 19.2 MHz crystal reference
+
+  clock-names:
+    items:
+      - const: aux
+      - const: xo
+
+  power-domains:
+    maxItems: 1
+    description: RPM VDDMX always-on domain supplying PLL digital logic
+
+  '#clock-cells':
+    const: 1
+    description: 0 for A53, 1 for A57, 2 for CCI
+
+required:
+  - compatible
+  - reg
+  - reg-names
+  - clocks
+  - clock-names
+  - power-domains
+  - '#clock-cells'
+
+additionalProperties: false

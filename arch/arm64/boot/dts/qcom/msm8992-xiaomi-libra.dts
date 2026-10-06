@@ -10,6 +10,7 @@
 #include "pmi8994.dtsi"
 #include <dt-bindings/gpio/gpio.h>
 #include <dt-bindings/input/gpio-keys.h>
+#include <dt-bindings/thermal/thermal.h>
 
 /delete-node/ &adsp_mem;
 /delete-node/ &audio_mem;
@@ -109,6 +110,234 @@
 		pinctrl-0 = <&touch_powerdown_default>;
 	};
 
+	cpufreq: cpufreq@f9019000 {
+		compatible = "qcom,msm8992-cpufreq";
+		reg = <0 0xf9019000 0 0x1000>, <0 0xf901a000 0 0x1000>;
+		clocks = <&cpu_clk 0>, <&cpu_clk 1>, <&cpu_clk 2>;
+		clock-names = "a53", "a57", "cci";
+		apc0-supply = <&VDD_APC0>;
+		apc1-supply = <&VDD_APC1>;
+		qcom,saw-regs = <&apc0_saw>, <&apc1_saw>;
+		power-domains = <&rpmpd MSM8994_VDDMX_AO>;
+		nvmem-cells = <&cpr_row62>, <&cpr_row137>, <&cpr_row22>, <&cpr_row138>, <&cpr_row139>, <&cpr_row140>, <&cpr_row56>, <&cpr_row57>, <&cpr_row136>, <&cpu_speedbin>;
+		nvmem-cell-names = "cpr-row62", "cpr-row137", "cpr-row22", "cpr-row138", "cpr-row139", "cpr-row140", "cpr-row56", "cpr-row57", "cpr-row136", "speedbin";
+	};
+
+	/* Factory polling, mitigation and emergency temperature limits. */
+	thermal-zones {
+		tsens0-thermal {
+			polling-delay-passive = <250>;
+			polling-delay = <250>;
+			thermal-sensors = <&tsens 0>;
+			trips {
+				critical {
+					temperature = <115000>;
+					hysteresis = <0>;
+					type = "critical";
+				};
+			};
+		};
+		tsens1-thermal {
+			polling-delay-passive = <250>;
+			polling-delay = <250>;
+			thermal-sensors = <&tsens 1>;
+			trips {
+				critical {
+					temperature = <115000>;
+					hysteresis = <0>;
+					type = "critical";
+				};
+			};
+		};
+		tsens2-thermal {
+			polling-delay-passive = <250>;
+			polling-delay = <250>;
+			thermal-sensors = <&tsens 2>;
+			trips {
+				critical {
+					temperature = <115000>;
+					hysteresis = <0>;
+					type = "critical";
+				};
+			};
+		};
+		tsens3-thermal {
+			polling-delay-passive = <250>;
+			polling-delay = <250>;
+			thermal-sensors = <&tsens 3>;
+			trips {
+				critical {
+					temperature = <115000>;
+					hysteresis = <0>;
+					type = "critical";
+				};
+			};
+		};
+		tsens4-thermal {
+			polling-delay-passive = <250>;
+			polling-delay = <250>;
+			thermal-sensors = <&tsens 4>;
+			trips {
+				critical {
+					temperature = <115000>;
+					hysteresis = <0>;
+					type = "critical";
+				};
+			};
+		};
+		tsens5-thermal {
+			polling-delay-passive = <250>;
+			polling-delay = <250>;
+			thermal-sensors = <&tsens 5>;
+			trips {
+				critical {
+					temperature = <115000>;
+					hysteresis = <0>;
+					type = "critical";
+				};
+			};
+		};
+		tsens7-thermal {
+			polling-delay-passive = <250>;
+			polling-delay = <250>;
+			thermal-sensors = <&tsens 7>;
+			trips {
+				tsens7_passive: passive {
+					temperature = <60000>;
+					hysteresis = <10000>;
+					type = "passive";
+				};
+				critical {
+					temperature = <115000>;
+					hysteresis = <0>;
+					type = "critical";
+				};
+			};
+			cooling-maps {
+				map {
+					trip = <&tsens7_passive>;
+					cooling-device = <&CPU0 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>, <&CPU4 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
+				};
+			};
+		};
+		tsens9-thermal {
+			polling-delay-passive = <250>;
+			polling-delay = <250>;
+			thermal-sensors = <&tsens 9>;
+			trips {
+				tsens9_passive: passive {
+					temperature = <60000>;
+					hysteresis = <10000>;
+					type = "passive";
+				};
+				critical {
+					temperature = <115000>;
+					hysteresis = <0>;
+					type = "critical";
+				};
+			};
+			cooling-maps {
+				map {
+					trip = <&tsens9_passive>;
+					cooling-device = <&CPU0 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
+				};
+			};
+		};
+		tsens10-thermal {
+			polling-delay-passive = <250>;
+			polling-delay = <250>;
+			thermal-sensors = <&tsens 10>;
+			trips {
+				tsens10_passive: passive {
+					temperature = <60000>;
+					hysteresis = <10000>;
+					type = "passive";
+				};
+				critical {
+					temperature = <115000>;
+					hysteresis = <0>;
+					type = "critical";
+				};
+			};
+			cooling-maps {
+				map {
+					trip = <&tsens10_passive>;
+					cooling-device = <&CPU0 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
+				};
+			};
+		};
+		tsens11-thermal {
+			polling-delay-passive = <250>;
+			polling-delay = <250>;
+			thermal-sensors = <&tsens 11>;
+			trips {
+				critical {
+					temperature = <115000>;
+					hysteresis = <0>;
+					type = "critical";
+				};
+			};
+		};
+		tsens12-thermal {
+			polling-delay-passive = <250>;
+			polling-delay = <250>;
+			thermal-sensors = <&tsens 12>;
+			trips {
+				critical {
+					temperature = <115000>;
+					hysteresis = <0>;
+					type = "critical";
+				};
+			};
+		};
+		tsens13-thermal {
+			polling-delay-passive = <250>;
+			polling-delay = <250>;
+			thermal-sensors = <&tsens 13>;
+			trips {
+				tsens13_passive: passive {
+					temperature = <60000>;
+					hysteresis = <10000>;
+					type = "passive";
+				};
+				critical {
+					temperature = <115000>;
+					hysteresis = <0>;
+					type = "critical";
+				};
+			};
+			cooling-maps {
+				map {
+					trip = <&tsens13_passive>;
+					cooling-device = <&CPU4 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
+				};
+			};
+		};
+		tsens14-thermal {
+			polling-delay-passive = <250>;
+			polling-delay = <250>;
+			thermal-sensors = <&tsens 14>;
+			trips {
+				tsens14_passive: passive {
+					temperature = <60000>;
+					hysteresis = <10000>;
+					type = "passive";
+				};
+				critical {
+					temperature = <115000>;
+					hysteresis = <0>;
+					type = "critical";
+				};
+			};
+			cooling-maps {
+				map {
+					trip = <&tsens14_passive>;
+					cooling-device = <&CPU4 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
+				};
+			};
+		};
+	};
+
 	reserved-memory {
 		#address-cells = <2>;
 		#size-cells = <2>;
@@ -199,7 +428,8 @@
 };
 
 &CPU0 {
-	clocks = <&cpu_aux_clk>;
+	clocks = <&cpu_clk 0>;
+	#cooling-cells = <2>;
 	enable-method = "qcom,8994-arm-cortex-acc";
 	qcom,acc = <&acc0>;
 	qcom,l2-power = <&cpu_power>;
@@ -207,7 +437,8 @@
 };
 
 &CPU1 {
-	clocks = <&cpu_aux_clk>;
+	clocks = <&cpu_clk 0>;
+	#cooling-cells = <2>;
 	enable-method = "qcom,8994-arm-cortex-acc";
 	qcom,acc = <&acc1>;
 	qcom,l2-power = <&cpu_power>;
@@ -215,7 +446,8 @@
 };
 
 &CPU2 {
-	clocks = <&cpu_aux_clk>;
+	clocks = <&cpu_clk 0>;
+	#cooling-cells = <2>;
 	enable-method = "qcom,8994-arm-cortex-acc";
 	qcom,acc = <&acc2>;
 	qcom,l2-power = <&cpu_power>;
@@ -223,7 +455,8 @@
 };
 
 &CPU3 {
-	clocks = <&cpu_aux_clk>;
+	clocks = <&cpu_clk 0>;
+	#cooling-cells = <2>;
 	enable-method = "qcom,8994-arm-cortex-acc";
 	qcom,acc = <&acc3>;
 	qcom,l2-power = <&cpu_power>;
@@ -231,7 +464,8 @@
 };
 
 &CPU4 {
-	clocks = <&cpu_aux_clk>;
+	clocks = <&cpu_clk 1>;
+	#cooling-cells = <2>;
 	enable-method = "qcom,8994-arm-cortex-acc";
 	qcom,acc = <&acc4>;
 	qcom,l2-power = <&cpu_power>;
@@ -239,7 +473,8 @@
 };
 
 &CPU5 {
-	clocks = <&cpu_aux_clk>;
+	clocks = <&cpu_clk 1>;
+	#cooling-cells = <2>;
 	enable-method = "qcom,8994-arm-cortex-acc";
 	qcom,acc = <&acc5>;
 	qcom,l2-power = <&cpu_power>;
@@ -291,6 +526,9 @@
 
 &pm8994_spmi_regulators {
 	VDD_APC0: s8 {
+		qcom,saw-reg = <&apc0_saw>;
+		qcom,saw-leader;
+		qcom,saw-cpu = <&CPU0>;
 		regulator-min-microvolt = <680000>;
 		regulator-max-microvolt = <1180000>;
 		regulator-always-on;
@@ -298,7 +536,18 @@
 	};
 
 	/* APC1 is 3-phase, but quoting downstream, s11 is "the gang leader" */
+	s9 {
+		qcom,saw-slave;
+	};
+
+	s10 {
+		qcom,saw-slave;
+	};
+
 	VDD_APC1: s11 {
+		qcom,saw-reg = <&apc1_saw>;
+		qcom,saw-leader;
+		qcom,saw-cpu = <&CPU4>;
 		regulator-min-microvolt = <700000>;
 		regulator-max-microvolt = <1225000>;
 		regulator-always-on;
@@ -673,4 +922,12 @@
 		power-source = <2>;
 		bias-disable;
 	};
+};
+
+&cpu_clk {
+	status = "okay";
+};
+
+&tsens {
+	status = "okay";
 };

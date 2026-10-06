@@ -19,6 +19,8 @@ description: |
 properties:
   compatible:
     oneOf:
+      - description: Unversioned type-2 TSENS with MSM8992 fuse packing
+        const: qcom,msm8992-tsens
       - description: msm8960 TSENS based
         items:
           - enum:
@@ -96,6 +98,9 @@ properties:
 
   nvmem-cells:
     oneOf:
+      - minItems: 3
+        maxItems: 3
+        description: MSM8992 primary, backup and backup selection data
       - minItems: 1
         maxItems: 2
         description:
@@ -113,6 +118,10 @@ properties:
 
   nvmem-cell-names:
     oneOf:
+      - items:
+          - const: calib
+          - const: calib-backup
+          - const: calib-select
       - minItems: 1
         items:
           - const: calib
@@ -236,6 +245,7 @@ allOf:
             enum:
               - qcom,ipq8064-tsens
               - qcom,msm8960-tsens
+              - qcom,msm8992-tsens
               - qcom,tsens-v0_1
               - qcom,tsens-v1
     then:

@@ -1028,7 +1028,11 @@ CPU support is limited to the legacy SCM/ACC **cold-boot** path for four A53
 and two A57 cores. CPU preparation selects the 600 MHz GPLL0 auxiliary path;
 the clock provider keeps that source enabled. Early SCM extended arguments
 must not depend on the tzmem pool, which is created only at driver probe.
-There is no DVFS, CPR voltage scaling, CPU hot-unplug, deep idle, or suspend.
+The companion cluster/CCI clock and cpufreq drivers now expose the full
+factory frequency plans using CPR open-loop calibrated voltages. TSENS supplies
+temperature readings and CPU cooling limits. Closed-loop CPR adaptation, CPU
+hot-unplug, deep idle and suspend remain unsupported. See the Debian guide
+for validation status and frequency/voltage coordination.
 Do not stress-test the CPU until the clock/voltage and thermal setup has been
 validated. ``maxcpus=1`` bypasses secondary CPU preparation, so that variant
 keeps the boot CPU's bootloader clock settings.

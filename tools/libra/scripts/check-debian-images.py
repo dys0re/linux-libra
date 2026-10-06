@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Validate the matching ARM64 boot/initrd and sparse F2FS userdata delivery."""
+import argparse
 import gzip
 import hashlib
 import importlib.util
@@ -8,12 +9,19 @@ import stat
 import struct
 import subprocess
 
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("--boot-only", action="store_true",
+                    help="check a kernel/initrd update without validating staged userdata images")
+parser.add_argument("--dtb", type=Path, help="expected DTB for a deliberate diagnostic variant")
+args = parser.parse_args()
+
 workspace = Path(__file__).resolve().parent.parent
 build = workspace / "build"
+expected_dtb = args.dtb or build / "libra/arch/arm64/boot/dts/qcom/msm8992-xiaomi-libra.dtb"
 spec = importlib.util.spec_from_file_location("legacy", workspace / "scripts/check-test-boot.py")
 legacy = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(legacy)
-legacy.check_dtb(build / "libra/arch/arm64/boot/dts/qcom/msm8992-xiaomi-libra.dtb")
+legacy.check_dtb(expected_dtb)
 stock = (workspace / "libra_images_6.1.7_20151221.0000.11_5.1_cn/images/boot.img").read_bytes()
 boot = (build / "boot-libra-alpine-drm.img").read_bytes()
 assert boot[:8] == b"ANDROID!"
@@ -31,7 +39,7 @@ assert kernel == (build / "libra/arch/arm64/boot/Image").read_bytes()
 assert initrd == (build / "debian-libra-initrd.cpio.gz").read_bytes()
 assert kernel[56:60] == b"ARM\x64"
 assert struct.unpack_from("<4sII", table) == (b"QCDT", 3, 2)
-expected = (build / "libra/arch/arm64/boot/dts/qcom/msm8992-xiaomi-libra.dtb").read_bytes()
+expected = expected_dtb.read_bytes()
 for i, platform in enumerate((251, 252)):
     entry = struct.unpack_from("<10I", table, 12 + 40 * i)
     assert entry[:8] == (platform, 12, 0, 0, 65545, 65546, 0, 0)
@@ -75,6 +83,9 @@ offset = struct.unpack_from("<Q", bb, 32)[0]
 size, count = struct.unpack_from("<HH", bb, 54)
 assert all(struct.unpack_from("<I", bb, offset + i * size)[0] != 3 for i in range(count))
 print(f"PASS legacy Qualcomm boot, exact kernel/DTB, ARM64 glibc initrd ({len(initrd)} bytes)")
+
+if args.boot_only:
+    raise SystemExit(0)
 
 raw = build / "debian-trixie-arm64.f2fs.img"
 sparse = build / "rootfs-libra-debian.img"

@@ -106,6 +106,14 @@ patternProperties:
           SAW controlled gang leader. Will be configured as SAW regulator.
         type: boolean
 
+      qcom,saw-reg:
+        description: Per-regulator SAW controller, overriding the shared controller
+        $ref: /schemas/types.yaml#/definitions/phandle
+
+      qcom,saw-cpu:
+        description: CPU on which voltage-control writes are executed; defaults to CPU0
+        $ref: /schemas/types.yaml#/definitions/phandle
+
 required:
   - compatible
 
