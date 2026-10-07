@@ -155,14 +155,15 @@ static struct msm8992_cpufreq state;
 static int fail_cpu,fail_cci;
 static unsigned long clk_get_rate(struct clk*c){return c->hz;}
 static int regulator_get_voltage(struct regulator*r){return r->uv;}
-static unsigned required(unsigned uv){return (int)uv+state.voltage_offset_uv;}
+static int expected_offset(unsigned long hz){return hz<=600000000&&state.voltage_offset_uv==-100000?-50000:state.voltage_offset_uv;}
+static unsigned required(unsigned uv,unsigned long hz){return (int)uv+expected_offset(hz);}
 static void check_volts(void){
- for(unsigned c=0;c<2;c++)assert(rails[c].uv>=required(msm8992_voltage(&state.plan[c],clocks[c].hz)));
- assert(rails[0].uv>=required(msm8992_cci_voltage(&state.plan[0],clocks[2].hz)));
+ for(unsigned c=0;c<2;c++)assert(rails[c].uv>=required(msm8992_voltage(&state.plan[c],clocks[c].hz),clocks[c].hz));
+ assert(rails[0].uv>=required(msm8992_cci_voltage(&state.plan[0],clocks[2].hz),clocks[0].hz));
 }
 static int clk_set_rate(struct clk*c,unsigned long hz){
- if(c->id==2){if(fail_cci==1)return -EIO;if((fail_cci==2&&hz!=300000000&&hz!=600000000)||(fail_cci==3&&hz==134400000)){c->hz=150000000;return -EIO;}assert(rails[0].uv>=required(msm8992_cci_voltage(&state.plan[0],hz)));}
- else{assert(rails[c->id].uv>=required(msm8992_voltage(&state.plan[c->id],hz)));assert(rails[c->id].uv>=required(msm8992_voltage(&state.plan[c->id],600000000)));if(fail_cpu){c->hz=600000000;return -ETIMEDOUT;}}
+ if(c->id==2){if(fail_cci==1)return -EIO;if((fail_cci==2&&hz!=300000000&&hz!=600000000)||(fail_cci==3&&hz==134400000)){c->hz=150000000;return -EIO;}assert(rails[0].uv>=required(msm8992_cci_voltage(&state.plan[0],hz),clocks[0].hz));}
+ else{assert(rails[c->id].uv>=required(msm8992_voltage(&state.plan[c->id],hz),hz));assert(rails[c->id].uv>=required(msm8992_voltage(&state.plan[c->id],600000000),600000000));c->hz=600000000;check_volts();if(fail_cpu)return -ETIMEDOUT;}
  c->hz=hz;check_volts();return 0;
 }
 static int regulator_set_voltage(struct regulator*r,unsigned lo,unsigned hi){assert(lo==hi);r->uv=lo;check_volts();return 0;}
@@ -179,9 +180,9 @@ static void run(int offset){
  assert(!msm8992_target(&p0,1));assert(clocks[0].hz==1440000000&&clocks[2].hz==787200000);
  assert(!msm8992_target(&p4,1));assert(clocks[1].hz==1824000000);
  assert(!msm8992_target(&p0,0));assert(clocks[0].hz==384000000&&clocks[2].hz==787200000);
- assert(rails[0].uv==required(msm8992_cci_voltage(&state.plan[0],787200000)));
+ assert(rails[0].uv==required(msm8992_cci_voltage(&state.plan[0],787200000),384000000));
  assert(!msm8992_target(&p4,0));assert(clocks[2].hz==134400000);
- assert(rails[0].uv==required(msm8992_voltage(&state.plan[0],600000000)));
+ assert(rails[0].uv==required(msm8992_voltage(&state.plan[0],600000000),384000000));
  fail_cci=1;assert(msm8992_target(&p0,1)==-EIO);assert(clocks[0].hz==384000000);check_volts();
  fail_cci=0;fail_cpu=1;assert(msm8992_target(&p0,1)==-ETIMEDOUT);assert(clocks[0].hz==600000000);check_volts();
  fail_cpu=0;assert(!msm8992_target(&p0,0));assert(!msm8992_target(&p4,1));check_volts();
@@ -203,15 +204,18 @@ static void run(int offset){
   for(unsigned c=0;c<2;c++){
    unsigned expected=max(msm8992_voltage(&state.plan[c],clocks[c].hz),msm8992_voltage(&state.plan[c],600000000));
    if(!c)expected=max(expected,msm8992_cci_voltage(&state.plan[0],clocks[2].hz));
-   assert(rails[c].uv==required(expected));
+   assert(rails[c].uv==required(expected,clocks[c].hz));
   }
  }
  assert(!memcmp(original,state.plan,sizeof(original)));
+ assert(msm8992_voltage_offset(&state,599999999)==expected_offset(599999999));
+ assert(msm8992_voltage_offset(&state,600000000)==expected_offset(600000000));
+ assert(msm8992_voltage_offset(&state,600000001)==expected_offset(600000001));
 }
 int main(void){
  run(0);run(-50000);run(-100000);
  (void)warnings;
- puts("PASS real DVFS transaction at factory, -50mV and -100mV: every CPU OPP pair, unchanged calibration, offset once after shared CCI/auxiliary votes, voltage/clock ordering and failure recovery");
+ puts("PASS real split DVFS transaction: exact 600MHz boundary, every CPU OPP pair, -50mV auxiliary voltage before each PLL switch, A53/CCI shared votes, lower final high-frequency voltage and failed-clock recovery; uniform factory/-50mV overrides preserved");
 }
 """
 source = build / "cpu-cpr-transaction.c"

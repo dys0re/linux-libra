@@ -39,7 +39,7 @@ MODULE_PARM_DESC(cci_test, "Expose manual 300/384 MHz CCI selection at the verif
 /* Experimental branch: retain the factory plan and offset the final rail vote. */
 static int voltage_offset_uv = -100000;
 module_param(voltage_offset_uv, int, 0400);
-MODULE_PARM_DESC(voltage_offset_uv, "Experimental CPU/CCI supply offset: -100000 uV by default; -50000 selects the previous experiment, 0 restores factory voltages");
+MODULE_PARM_DESC(voltage_offset_uv, "Experimental offset above 600 MHz: -100000 uV by default; at/below 600 MHz limited to -50000 uV; 0 restores factory voltages");
 
 struct msm8992_cpufreq {
 	struct device *dev;
@@ -132,6 +132,11 @@ DEFINE_DEBUGFS_ATTRIBUTE(msm8992_saw_test_fops, NULL, msm8992_saw_test_set, "%ll
 
 static struct msm8992_cpufreq *msm8992_dvfs;
 
+static int msm8992_voltage_offset(struct msm8992_cpufreq *d, unsigned long hz)
+{
+	return hz <= 600000000 ? max(d->voltage_offset_uv, -50000) : d->voltage_offset_uv;
+}
+
 static unsigned int msm8992_voltage(struct msm8992_cpr_plan *plan, unsigned long hz)
 {
 	unsigned int i;
@@ -203,7 +208,8 @@ static int msm8992_target(struct cpufreq_policy *policy, unsigned int index)
 	unsigned long hz = policy->freq_table[index].frequency * 1000UL;
 	unsigned long request[2], old_cci, new_cci;
 	unsigned long old_cpu;
-	unsigned int uv[2], old_uv[2];
+	unsigned int uv[2], old_uv[2], transition_uv[2], cci_uv;
+	int auxiliary_offset;
 	int ret, i;
 
 	guard(mutex)(&d->lock);
@@ -223,12 +229,24 @@ static int msm8992_target(struct cpufreq_policy *policy, unsigned int index)
 			    msm8992_voltage(&d->plan[i], 600000000));
 	}
 	uv[0] = max(uv[0], msm8992_cci_voltage(&d->plan[0], new_cci));
-	/* Apply once to each final vote, including the auxiliary floor and shared CCI. */
+	/* APC0's final offset follows A53's target frequency, including its CCI vote. */
 	for (i = 0; i < 2; i++)
-		uv[i] = (int)uv[i] + d->voltage_offset_uv;
+		uv[i] = (int)uv[i] + msm8992_voltage_offset(d, request[i]);
+	auxiliary_offset = msm8992_voltage_offset(d, 600000000);
+	for (i = 0; i < 2; i++) {
+		unsigned int auxiliary_uv = (int)msm8992_voltage(&d->plan[i], 600000000) +
+					    auxiliary_offset;
+
+		/* Clock callbacks and failed transitions can select the 600 MHz path. */
+		transition_uv[i] = max(max(uv[i], old_uv[i]), auxiliary_uv);
+	}
+	/* CCI recovery can leave both CPUs at 600 MHz before restoring the old CCI. */
+	cci_uv = (int)max(msm8992_cci_voltage(&d->plan[0], old_cci),
+			  msm8992_cci_voltage(&d->plan[0], new_cci)) + auxiliary_offset;
+	transition_uv[0] = max(transition_uv[0], cci_uv);
 	/* Raise both supplies first. Keep the old vote until each clock settles. */
 	for (i = 0; i < 2; i++) {
-		ret = msm8992_set_voltage(d, i, max(uv[i], old_uv[i]));
+		ret = msm8992_set_voltage(d, i, transition_uv[i]);
 		if (ret)
 			return ret;
 	}
@@ -584,8 +602,8 @@ static int msm8992_cpufreq_probe(struct platform_device *pdev)
 		readl(base + 0x90);
 	}
 	msm8992_dvfs = d;
-	dev_info(dev, "MSM8992 voltage offset: %d uV on APC0/CCI and APC1\n",
-		 d->voltage_offset_uv);
+	dev_info(dev, "MSM8992 voltage offset: <=600MHz %d uV, >600MHz %d uV; APC0/CCI follows A53\n",
+		 msm8992_voltage_offset(d, 600000000), d->voltage_offset_uv);
 	ret = cpufreq_register_driver(&msm8992_driver);
 	if (!ret) {
 		dev_info(dev, "MSM8992 cpufreq ready: calibrated factory plans, CPU cooling and schedutil\n");

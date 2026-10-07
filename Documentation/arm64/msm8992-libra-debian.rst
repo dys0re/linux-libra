@@ -561,20 +561,31 @@ repeat activation after a whole-device reset; retain one boot's logs first.
 Experimental CPU undervolt
 -------------------------
 
-The ``experiment/libra-undervolt-100mv`` branch defaults to a -100,000 uV
-offset on both CPU supplies. The factory fuse calculations remain unchanged.
-The offset is applied once after combining the CPU, transient 600 MHz and
-CCI requirements, so the shared A53/CCI rail also receives the reduction.
+The ``experiment/libra-undervolt-split`` branch uses -50,000 uV at CPU target
+frequencies up to and including 600 MHz, and -100,000 uV above 600 MHz.
+The factory fuse calculations remain unchanged. The final offset is applied
+once after combining the CPU, auxiliary floor and CCI requirements. APC0/CCI
+shares one rail and follows the A53 target frequency; APC1 follows A57.
 Other supplies, thermal trips and frequency limits are unchanged.
 
+Before changing a PLL, raise the transition vote to cover the 600 MHz auxiliary
+path at -50,000 uV, both old and new CCI requirements, and the old/final CPU
+requirements. Only apply the final high-frequency vote after the clocks have
+settled. Failure/recovery retains the transition vote, including when both
+CPUs return to 600 MHz before recovering CCI. This avoids carrying a high
+frequency's -100mV offset into the temporary low-frequency path.
+
 The read-only parameter ``qcom_msm8992_cpufreq.voltage_offset_uv`` accepts
-``-100000``, ``-50000`` or ``0`` at boot; ``0`` restores the factory DVFS votes.
-``-50000`` selects the preceding experiment, whose initial stability was
-reported as acceptable by the user. The startup
-log reports the selected offset before cpufreq registration. This is an
+``-100000`` (default split profile), ``-50000`` (uniform -50mV) or ``0``
+(factory DVFS votes) at boot. The user's initial -50mV stability report was
+acceptable; uniform -100mV caused a whole-device reboot. The failed frequency
+and cluster are unknown, so the split profile's high-frequency stability still
+requires testing. The startup log reports both offsets before cpufreq
+registration. This is an
 experimental voltage request, not a measured stable silicon limit. Host
-regressions cover all CPU OPP pairs and failed clock transitions with all three
-offsets; only hardware testing can establish stability and power savings.
+regressions cover the exact 600MHz boundary, all CPU OPP pairs, auxiliary-path
+voltage during each clock switch, and failed transitions with all three
+profiles; only hardware testing can establish stability and power savings.
 
 The accepted boot is preserved at
 ``build/archive/libra-stock-voltage/boot-libra-alpine-drm.img``. The preceding
