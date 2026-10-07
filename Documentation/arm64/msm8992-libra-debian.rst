@@ -561,21 +561,25 @@ repeat activation after a whole-device reset; retain one boot's logs first.
 Experimental CPU undervolt
 -------------------------
 
-The ``experiment/libra-undervolt-50mv`` branch defaults to a -50,000 uV
+The ``experiment/libra-undervolt-100mv`` branch defaults to a -100,000 uV
 offset on both CPU supplies. The factory fuse calculations remain unchanged.
 The offset is applied once after combining the CPU, transient 600 MHz and
 CCI requirements, so the shared A53/CCI rail also receives the reduction.
 Other supplies, thermal trips and frequency limits are unchanged.
 
 The read-only parameter ``qcom_msm8992_cpufreq.voltage_offset_uv`` accepts
-``-50000`` or ``0`` at boot; ``0`` restores the factory DVFS votes. The startup
+``-100000``, ``-50000`` or ``0`` at boot; ``0`` restores the factory DVFS votes.
+``-50000`` selects the preceding experiment, whose initial stability was
+reported as acceptable by the user. The startup
 log reports the selected offset before cpufreq registration. This is an
 experimental voltage request, not a measured stable silicon limit. Host
-regressions cover all CPU OPP pairs and failed clock transitions with both
+regressions cover all CPU OPP pairs and failed clock transitions with all three
 offsets; only hardware testing can establish stability and power savings.
 
 The accepted boot is preserved at
-``build/archive/libra-stock-voltage/boot-libra-alpine-drm.img``. Boot the test
+``build/archive/libra-stock-voltage/boot-libra-alpine-drm.img``. The preceding
+-50mV image is preserved at
+``build/archive/libra-undervolt-50mv/boot-libra-alpine-drm.img``. Boot the test
 image with ``fastboot boot boot-libra-alpine-drm.img`` without reflashing
 userdata. Record the selected offset, policy frequencies, regulator summary
 and TSENS temperatures. Check both sustained work and idle/load transitions,

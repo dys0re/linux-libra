@@ -127,7 +127,7 @@ print("PASS exact OEM CPR tables; primary/redundant packing, revision/RO tuple m
 
 # Execute the real transaction functions against fake supplies/clocks.
 driver = (workspace / "linux/drivers/cpufreq/qcom-msm8992-cpufreq.c").read_text()
-assert re.search(r'static int voltage_offset_uv = -50000;', driver)
+assert re.search(r'static int voltage_offset_uv = -100000;', driver)
 assert 'module_param(voltage_offset_uv, int, 0400);' in driver
 body = driver[driver.index("struct msm8992_cpufreq {"):driver.index("static int msm8992_voltage_report_show")] + driver[driver.index("static struct msm8992_cpufreq *msm8992_dvfs"):driver.index("static int msm8992_policy_init")]
 stubs = r"""
@@ -209,9 +209,9 @@ static void run(int offset){
  assert(!memcmp(original,state.plan,sizeof(original)));
 }
 int main(void){
- run(0);run(-50000);
+ run(0);run(-50000);run(-100000);
  (void)warnings;
- puts("PASS real DVFS transaction at factory and -50mV: every CPU OPP pair, unchanged calibration, offset once after shared CCI/auxiliary votes, voltage/clock ordering and failure recovery");
+ puts("PASS real DVFS transaction at factory, -50mV and -100mV: every CPU OPP pair, unchanged calibration, offset once after shared CCI/auxiliary votes, voltage/clock ordering and failure recovery");
 }
 """
 source = build / "cpu-cpr-transaction.c"

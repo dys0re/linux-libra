@@ -37,9 +37,9 @@ module_param(cci_test, bool, 0400);
 MODULE_PARM_DESC(cci_test, "Expose manual 300/384 MHz CCI selection at the verified 600 MHz CPU boot rates");
 
 /* Experimental branch: retain the factory plan and offset the final rail vote. */
-static int voltage_offset_uv = -50000;
+static int voltage_offset_uv = -100000;
 module_param(voltage_offset_uv, int, 0400);
-MODULE_PARM_DESC(voltage_offset_uv, "Experimental CPU/CCI supply offset: -50000 uV by default, 0 restores factory voltages");
+MODULE_PARM_DESC(voltage_offset_uv, "Experimental CPU/CCI supply offset: -100000 uV by default; -50000 selects the previous experiment, 0 restores factory voltages");
 
 struct msm8992_cpufreq {
 	struct device *dev;
@@ -451,8 +451,9 @@ static int msm8992_cpufreq_probe(struct platform_device *pdev)
 		dev_info(dev, "MSM8992 DVFS held for manual activation\n");
 		return -ENODEV;
 	}
-	if (voltage_offset_uv != 0 && voltage_offset_uv != -50000)
-		return dev_err_probe(dev, -EINVAL, "voltage offset must be 0 or -50000 uV\n");
+	if (voltage_offset_uv != 0 && voltage_offset_uv != -50000 &&
+	    voltage_offset_uv != -100000)
+		return dev_err_probe(dev, -EINVAL, "voltage offset must be 0, -50000 or -100000 uV\n");
 
 	/* High frequency support requires the calibrated thermal zones first. */
 	if (!observe) {
