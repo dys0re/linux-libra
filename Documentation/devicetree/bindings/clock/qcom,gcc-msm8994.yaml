@@ -22,14 +22,20 @@ properties:
       - qcom,gcc-msm8994
 
   clocks:
+    minItems: 2
     items:
       - description: Board XO source
       - description: Sleep clock source
+      - description: PCIe0 PHY PIPE clock output
+      - description: PCIe1 PHY PIPE clock output
 
   clock-names:
+    minItems: 2
     items:
       - const: xo
       - const: sleep
+      - const: pcie0_pipe
+      - const: pcie1_pipe
 
 required:
   - compatible

@@ -180,6 +180,14 @@ config PHY_QCOM_USB_HSIC
 	help
 	  Support for the USB HSIC ULPI compliant PHY on QCOM chipsets.
 
+config PHY_QCOM_PCIE_20NM
+	tristate "Qualcomm MSM8992/8994 20nm PCIe PHY"
+	depends on OF && (ARCH_QCOM || COMPILE_TEST)
+	depends on COMMON_CLK && RESET_CONTROLLER
+	select GENERIC_PHY
+	help
+	  PCIe QMP PHY using the 19.2 MHz factory calibration sequence.
+
 config PHY_QCOM_USB_HS_20NM
 	tristate "Qualcomm MSM8992/8994 High-Speed USB PHY"
 	depends on OF && (ARCH_QCOM || COMPILE_TEST)

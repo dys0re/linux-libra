@@ -1,0 +1,25 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+# Read-only diagnostics; deliberately never scans or prints saved credentials.
+set -u
+printf 'Kernel: '; uname -r
+printf '\nPCIe devices:\n'
+lspci -nnk 2>/dev/null || true
+printf '\nWireless interfaces:\n'
+iw dev 2>/dev/null || true
+printf '\nRadio switches:\n'
+rfkill list 2>/dev/null || true
+printf '\nNetworkManager devices:\n'
+nmcli -f DEVICE,TYPE,STATE device 2>/dev/null || true
+printf '\nBluetooth controllers:\n'
+bluetoothctl list 2>/dev/null || true
+printf '\nFirmware provenance:\n'
+if [ -r /usr/lib/firmware/libra-oem-radio-manifest.json ]; then
+ cat /usr/lib/firmware/libra-oem-radio-manifest.json
+fi
+if [ "$(id -u)" = 0 ]; then
+ printf '\nDeferred probes:\n'
+ cat /sys/kernel/debug/devices_deferred 2>/dev/null || true
+ printf '\nRadio kernel messages:\n'
+ dmesg | grep -Ei 'pcie|pci 0000|ath10k|wlan|bluetooth|qca|firmware' | tail -n 100
+fi

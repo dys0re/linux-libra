@@ -116,6 +116,26 @@ required:
 additionalProperties: false
 
 allOf:
+  - if:
+      properties:
+        compatible:
+          contains:
+            const: qcom,qca2066-bt
+    then:
+      required:
+        - enable-gpios
+        - clocks
+  - if:
+      properties:
+        compatible:
+          contains:
+            const: qcom,qca6174-bt
+      required:
+        - vddrf-supply
+    then:
+      required:
+        - vddio-supply
+        - vddxo-supply
   - $ref: bluetooth-controller.yaml#
   - $ref: /schemas/serial/serial-peripheral-props.yaml#
   - if:
@@ -123,12 +143,17 @@ allOf:
         compatible:
           contains:
             enum:
-              - qcom,qca2066-bt
               - qcom,qca6174-bt
     then:
       required:
         - enable-gpios
-        - clocks
+      anyOf:
+        - required:
+            - clocks
+        - required:
+            - vddrf-supply
+            - vddio-supply
+            - vddxo-supply
 
   - if:
       properties:

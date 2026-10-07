@@ -5,6 +5,7 @@ from pathlib import Path
 import subprocess
 
 workspace=Path(__file__).resolve().parents[4]
+subprocess.run(['python3', str(workspace / 'scripts/prepare-libra-thermal-observe-dtb.py'), '--voltages'], check=True, stdout=subprocess.DEVNULL)
 src=(workspace/'linux/drivers/cpufreq/qcom-msm8992-cpufreq.c').read_text()
 report=src[src.index('static int msm8992_voltage_report_show('):src.index('DEFINE_SHOW_ATTRIBUTE(msm8992_voltage_report)')]
 prefix=r'''

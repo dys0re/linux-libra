@@ -13,14 +13,17 @@
 #include <linux/debugfs.h>
 #include <linux/delay.h>
 #include <linux/gpio/consumer.h>
+#include <linux/firmware/qcom/qcom_scm.h>
 #include <linux/interconnect.h>
 #include <linux/interrupt.h>
 #include <linux/io.h>
 #include <linux/iopoll.h>
 #include <linux/kernel.h>
 #include <linux/limits.h>
+#include <linux/moduleparam.h>
 #include <linux/init.h>
 #include <linux/of.h>
+#include <linux/of_platform.h>
 #include <linux/pci.h>
 #include <linux/pm_opp.h>
 #include <linux/pm_runtime.h>
@@ -28,6 +31,7 @@
 #include <linux/phy/pcie.h>
 #include <linux/phy/phy.h>
 #include <linux/regulator/consumer.h>
+#include <linux/regmap.h>
 #include <linux/reset.h>
 #include <linux/slab.h>
 #include <linux/types.h>
@@ -36,6 +40,11 @@
 #include "../../pci.h"
 #include "pcie-designware.h"
 #include "pcie-qcom-common.h"
+
+/* Libra starts the new PCIe path after its root and USB recovery link exist. */
+static bool msm8992_probe;
+module_param(msm8992_probe, bool, 0600);
+MODULE_PARM_DESC(msm8992_probe, "Allow userspace to activate MSM8992 PCIe");
 
 /* PARF registers */
 #define PARF_SYS_CTRL				0x00
@@ -227,7 +236,15 @@ struct qcom_pcie_resources_2_9_0 {
 	struct reset_control *rst;
 };
 
+struct qcom_pcie_resources_msm8992 {
+	struct regmap *gcc;
+	struct reset_control *phy_reset;
+	struct clk_bulk_data clks[6];
+	struct regulator_bulk_data supplies[3];
+};
+
 union qcom_pcie_resources {
+	struct qcom_pcie_resources_msm8992 msm8992;
 	struct qcom_pcie_resources_1_0_0 v1_0_0;
 	struct qcom_pcie_resources_2_1_0 v2_1_0;
 	struct qcom_pcie_resources_2_3_2 v2_3_2;
@@ -246,6 +263,7 @@ struct qcom_pcie_ops {
 	void (*host_post_init)(struct qcom_pcie *pcie);
 	void (*deinit)(struct qcom_pcie *pcie);
 	void (*ltssm_enable)(struct qcom_pcie *pcie);
+	int (*link_clocks_ready)(struct qcom_pcie *pcie);
 	int (*config_sid)(struct qcom_pcie *pcie);
 };
 
@@ -305,6 +323,9 @@ static int qcom_pcie_start_link(struct dw_pcie *pci)
 	/* Enable Link Training state machine */
 	if (pcie->cfg->ops->ltssm_enable)
 		pcie->cfg->ops->ltssm_enable(pcie);
+
+	if (pcie->cfg->ops->link_clocks_ready)
+		return pcie->cfg->ops->link_clocks_ready(pcie);
 
 	return 0;
 }
@@ -537,6 +558,203 @@ static int qcom_pcie_post_init_2_1_0(struct qcom_pcie *pcie)
 	return 0;
 }
 
+/* MSM8992 uses the factory 20nm PHY and PARF LTSSM enable. */
+static int qcom_pcie_get_resources_msm8992(struct qcom_pcie *pcie)
+{
+	struct qcom_pcie_resources_msm8992 *res = &pcie->res.msm8992;
+	struct device *dev = pcie->pci->dev;
+	struct of_phandle_args clock;
+	struct platform_device *gcc;
+	int ret;
+
+	/* Snapshot only selected GCC registers while the domain is still on. */
+	ret = of_parse_phandle_with_args(dev->of_node, "clocks", "#clock-cells",
+					1, &clock);
+	if (!ret) {
+		gcc = of_find_device_by_node(clock.np);
+		of_node_put(clock.np);
+		if (gcc) {
+			res->gcc = dev_get_regmap(&gcc->dev, NULL);
+			put_device(&gcc->dev);
+		}
+	}
+
+	res->clks[0].id = "ref";
+	res->clks[1].id = "aux";
+	res->clks[2].id = "cfg";
+	res->clks[3].id = "bus_master";
+	res->clks[4].id = "bus_slave";
+	res->clks[5].id = "ldo";
+	ret = devm_clk_bulk_get(dev, ARRAY_SIZE(res->clks), res->clks);
+	if (ret)
+		return ret;
+
+	res->phy_reset = devm_reset_control_get_exclusive(dev, "phy");
+	if (IS_ERR(res->phy_reset))
+		return PTR_ERR(res->phy_reset);
+
+	res->supplies[0].supply = "vdda";
+	res->supplies[1].supply = "vdda_phy";
+	res->supplies[2].supply = "vddpe-3v3";
+	return devm_regulator_bulk_get(dev, ARRAY_SIZE(res->supplies),
+				       res->supplies);
+}
+
+static void qcom_pcie_snapshot_msm8992(struct qcom_pcie *pcie, const char *stage)
+{
+	struct regmap *map = pcie->res.msm8992.gcc;
+	static const unsigned int regs[] = {
+		0x1ac4, 0x1ad4, 0x1ad8, 0x1adc, 0x1ae0,
+		0x1b00, 0x1b04, 0x1b08,
+		0x1b0c, 0x1b10, 0x1b14, 0x1b18, 0x1e00,
+	};
+	unsigned int value;
+	int i, ret;
+
+	if (!map)
+		return;
+	for (i = 0; i < ARRAY_SIZE(regs); i++) {
+		ret = regmap_read(map, regs[i], &value);
+		if (ret)
+			dev_info(pcie->pci->dev, "PCIe %s: GCC+%04x read error %d\n",
+				 stage, regs[i], ret);
+		else
+			dev_info(pcie->pci->dev, "PCIe %s: GCC+%04x=%08x\n",
+				 stage, regs[i], value);
+	}
+}
+
+static void qcom_pcie_deinit_msm8992(struct qcom_pcie *pcie)
+{
+	struct qcom_pcie_resources_msm8992 *res = &pcie->res.msm8992;
+
+	writel(readl(pcie->parf + PARF_PHY_CTRL) | BIT(0),
+	       pcie->parf + PARF_PHY_CTRL);
+	reset_control_assert(res->phy_reset);
+	clk_bulk_disable_unprepare(4, &res->clks[1]);
+	clk_disable_unprepare(res->clks[5].clk);
+	clk_disable_unprepare(res->clks[0].clk);
+	regulator_bulk_disable(ARRAY_SIZE(res->supplies), res->supplies);
+}
+
+static int qcom_pcie_init_msm8992(struct qcom_pcie *pcie)
+{
+	struct qcom_pcie_resources_msm8992 *res = &pcie->res.msm8992;
+	int ret;
+
+	qcom_pcie_snapshot_msm8992(pcie, "domain-on");
+	ret = regulator_bulk_enable(ARRAY_SIZE(res->supplies), res->supplies);
+	if (ret)
+		return ret;
+
+	/* Power reference and PHY LDO before releasing the outer block reset. */
+	ret = clk_prepare_enable(res->clks[0].clk);
+	if (ret)
+		goto err_supplies;
+	ret = clk_prepare_enable(res->clks[5].clk);
+	if (ret)
+		goto err_ref;
+	ret = reset_control_deassert(res->phy_reset);
+	if (ret)
+		goto err_ldo;
+	qcom_pcie_snapshot_msm8992(pcie, "reset-released");
+
+	/* Program M/N after reset release, before requesting the branch. */
+	ret = clk_set_rate(res->clks[1].clk, 1011000);
+	if (ret)
+		goto err_reset;
+	qcom_pcie_snapshot_msm8992(pcie, "aux-configured");
+	ret = clk_bulk_prepare_enable(4, &res->clks[1]);
+	if (ret) {
+		qcom_pcie_snapshot_msm8992(pcie, "clock-error");
+		goto err_reset;
+	}
+
+	/* OEM TrustZone device ID 11 grants the PCIe aperture access. */
+	ret = qcom_scm_restore_sec_cfg(11, 0);
+	if (ret) {
+		dev_err(pcie->pci->dev, "PCIe secure configuration failed: %d\n", ret);
+		goto err_clks;
+	}
+	writel(readl(pcie->parf + PARF_PHY_CTRL) & ~BIT(0),
+	       pcie->parf + PARF_PHY_CTRL);
+	writel(0, pcie->parf + PARF_DBI_BASE_ADDR);
+	writel(0x365e, pcie->parf + PARF_SYS_CTRL);
+	writel(SZ_16M, pcie->parf + PARF_SLV_ADDR_SPACE_SIZE);
+	return 0;
+
+err_clks:
+	clk_bulk_disable_unprepare(4, &res->clks[1]);
+err_reset:
+	reset_control_assert(res->phy_reset);
+err_ldo:
+	clk_disable_unprepare(res->clks[5].clk);
+err_ref:
+	clk_disable_unprepare(res->clks[0].clk);
+err_supplies:
+	regulator_bulk_disable(ARRAY_SIZE(res->supplies), res->supplies);
+	return ret;
+}
+
+static int qcom_pcie_link_clocks_ready_msm8992(struct qcom_pcie *pcie)
+{
+	struct regmap *map = pcie->res.msm8992.gcc;
+	static const unsigned int clocks[] = { 0x1ad4, 0x1ad8 };
+	unsigned int value;
+	int ret, i;
+
+	if (!map)
+		return -ENODEV;
+	/* AUX and PIPE may be gated during initial clock requests. Both must
+	 * run once PHY reset is released and the timing/link engine is on.
+	 */
+	for (i = 0; i < ARRAY_SIZE(clocks); i++) {
+		ret = regmap_read_poll_timeout(map, clocks[i], value,
+			(value & BIT(0)) && !(value & BIT(31)), 10, 100000);
+		if (ret) {
+			qcom_pcie_snapshot_msm8992(pcie, "link-clock-error");
+			dev_err(pcie->pci->dev, "PCIe GCC+%04x not running after PHY/link start: %08x (%d)\n",
+				clocks[i], value, ret);
+			return ret;
+		}
+	}
+	qcom_pcie_snapshot_msm8992(pcie, "link-clocks-ready");
+	return 0;
+}
+
+static int qcom_pcie_post_init_msm8992(struct qcom_pcie *pcie)
+{
+	u32 val;
+
+	qcom_pcie_snapshot_msm8992(pcie, "phy-ready");
+
+	val = readl(pcie->parf + PARF_AXI_MSTR_WR_ADDR_HALT);
+	writel(val | BIT(31), pcie->parf + PARF_AXI_MSTR_WR_ADDR_HALT);
+	qcom_pcie_clear_hpc(pcie->pci);
+	return 0;
+}
+
+static void qcom_pcie_host_post_init_msm8992(struct qcom_pcie *pcie)
+{
+	u32 val;
+
+	/* Read link state only after the PHY and link clocks are running. */
+	dev_info(pcie->pci->dev,
+		 "PCIe trained-state: PARF+1b0=%08x ELBI+008=%08x DBI+078=%08x DBI+07c=%08x DBI+080=%08x DBI+0a0=%08x DBI+728=%08x\n",
+		 readl(pcie->parf + PARF_LTSSM), readl(pcie->elbi + 0x08),
+		 readl(pcie->pci->dbi_base + 0x78),
+		 readl(pcie->pci->dbi_base + 0x7c),
+		 readl(pcie->pci->dbi_base + 0x80),
+		 readl(pcie->pci->dbi_base + 0xa0),
+		 readl(pcie->pci->dbi_base + 0x728));
+
+	/* Factory config_controller adjusts N_FTS only after link bring-up. */
+	if (!dw_pcie_link_up(pcie->pci))
+		return;
+	val = readl(pcie->pci->dbi_base + PCIE_PORT_AFR);
+	writel(val | BIT(15), pcie->pci->dbi_base + PCIE_PORT_AFR);
+}
+
 static int qcom_pcie_get_resources_1_0_0(struct qcom_pcie *pcie)
 {
 	struct qcom_pcie_resources_1_0_0 *res = &pcie->res.v1_0_0;
@@ -625,6 +843,20 @@ static void qcom_pcie_2_3_2_ltssm_enable(struct qcom_pcie *pcie)
 	val = readl(pcie->parf + PARF_LTSSM);
 	val |= LTSSM_EN;
 	writel(val, pcie->parf + PARF_LTSSM);
+}
+
+static void qcom_pcie_ltssm_enable_msm8992(struct qcom_pcie *pcie)
+{
+	struct dw_pcie *pci = pcie->pci;
+	u16 offset = dw_pcie_find_capability(pci, PCI_CAP_ID_EXP);
+	u16 val;
+
+	/* Factory sets MRRS=4096 before enabling PARF link training. */
+	val = dw_pcie_readw_dbi(pci, offset + PCI_EXP_DEVCTL);
+	val &= ~PCI_EXP_DEVCTL_READRQ;
+	val |= PCI_EXP_DEVCTL_READRQ_4096B;
+	dw_pcie_writew_dbi(pci, offset + PCI_EXP_DEVCTL, val);
+	qcom_pcie_2_3_2_ltssm_enable(pcie);
 }
 
 static int qcom_pcie_get_resources_2_3_2(struct qcom_pcie *pcie)
@@ -1309,6 +1541,21 @@ static const struct qcom_pcie_ops ops_2_1_0 = {
 	.ltssm_enable = qcom_pcie_2_1_0_ltssm_enable,
 };
 
+static const struct qcom_pcie_ops ops_msm8992 = {
+	.get_resources = qcom_pcie_get_resources_msm8992,
+	.init = qcom_pcie_init_msm8992,
+	.post_init = qcom_pcie_post_init_msm8992,
+	.deinit = qcom_pcie_deinit_msm8992,
+	/* Factory pci-msm enables PARF+0x1b0 BIT(8), not ELBI+0x04. */
+	.ltssm_enable = qcom_pcie_ltssm_enable_msm8992,
+	.link_clocks_ready = qcom_pcie_link_clocks_ready_msm8992,
+	.host_post_init = qcom_pcie_host_post_init_msm8992,
+};
+
+static const struct qcom_pcie_cfg cfg_msm8992 = {
+	.ops = &ops_msm8992,
+};
+
 /* Qcom IP rev.: 1.0.0	Synopsys IP rev.: 4.11a */
 static const struct qcom_pcie_ops ops_1_0_0 = {
 	.get_resources = qcom_pcie_get_resources_1_0_0,
@@ -1599,6 +1846,11 @@ static int qcom_pcie_probe(struct platform_device *pdev)
 	char *name;
 
 	pcie_cfg = of_device_get_match_data(dev);
+	if (of_device_is_compatible(dev->of_node, "qcom,pcie-msm8992") &&
+	    !msm8992_probe) {
+		dev_info(dev, "MSM8992 PCIe held for userspace activation\n");
+		return -ENODEV;
+	}
 	if (!pcie_cfg || !pcie_cfg->ops) {
 		dev_err(dev, "Invalid platform data\n");
 		return -EINVAL;
@@ -1835,6 +2087,7 @@ static int qcom_pcie_resume_noirq(struct device *dev)
 }
 
 static const struct of_device_id qcom_pcie_match[] = {
+	{ .compatible = "qcom,pcie-msm8992", .data = &cfg_msm8992 },
 	{ .compatible = "qcom,pcie-apq8064", .data = &cfg_2_1_0 },
 	{ .compatible = "qcom,pcie-apq8084", .data = &cfg_1_0_0 },
 	{ .compatible = "qcom,pcie-ipq4019", .data = &cfg_2_4_0 },

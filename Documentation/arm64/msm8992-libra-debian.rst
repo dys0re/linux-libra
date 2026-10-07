@@ -8,6 +8,33 @@ Delivery
 filesystem, labelled ``libra-debian``. Flash it to the GPT ``userdata``
 partition. This replaces the existing contents of userdata.
 
+The Wi-Fi/Bluetooth test delivery adds QCA6174 PCIe/UART support and matching
+modules, OEM firmware and Debian wireless packages. Existing userdata must
+install ``build/libra-radio-update.tar.xz`` before booting the new kernel;
+reflashing userdata is unnecessary. Extract the archive on the phone and run
+``sudo sh libra-radio-update/install.sh``. The old target kernel omitted ``CONFIG_FILE_LOCKING``, whose fcntl stub
+returns EACCES even for root. The corrected kernel enables POSIX locks and
+requires freshly matched modules because VFS layouts change. On affected
+phones, first run ``install.sh --bootstrap`` to copy modules/firmware without
+APT or starting radio services, then boot the corrected radio-disabled image.
+Run the full installer once POSIX locking works, and then boot the normal
+radio image. The installer now tests locking on the running kernel before
+starting APT. Offline package tests using the build-host kernel did not
+cover this missing target-kernel feature.
+
+The archive includes all new Debian
+dependencies for offline installation and a Chinese test guide. Installation
+repairs the known image/overlay system-path ownership without changing home
+directories. The validated pre-radio images are in
+``build/verified-libra-dvfs/``.
+
+Phones already running the build71 radio kernel and packages can instead use
+``build/libra-radio-policy.tar.xz``: extract it, then run
+``sudo sh libra-radio-policy/install-policy.sh``. This small update installs
+the OEM OTP return-code policy, selects upstream-signed regulatory data and
+updates startup readiness checks. It does not reflash userdata or reload the
+running Wi-Fi driver. The public boot enables the deferred radio service.
+
 ``build/boot-libra-alpine-drm.img`` retains the established filename but now
 contains the Libra ARM64 kernel and a small Debian/glibc initrd. It boots the
 userdata filesystem into systemd; Debian is not unpacked into RAM. The initrd
@@ -148,9 +175,10 @@ If restoration fails, CPUs and CCI attempt to return to the verified
 
 Rebuild only the delivered boot with ``sh scripts/build-debian-boot.sh --boot-only``.
 This leaves the installed/sparse userdata image unchanged. Effective config
-now selects ``CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=y``. The installed MSM
-module's code, data, relocations and symbol ABI remain unchanged; rebuilt
-module differences are confined to private ``__UNIQUE_ID`` string counters.
+now selects ``CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=y``. For the prior CPU-only update, the installed MSM module's code, data,
+relocations and symbol ABI were unchanged; rebuilt module differences were
+confined to private ``__UNIQUE_ID`` string counters. The current radio delivery
+requires its matching module update even though the kernel release is unchanged.
 
 The user booted the automatic image and confirmed the TSENS-ready/cpufreq-ready
 messages, schedutil and an A53 policy reporting 1.44 GHz. Only one policy was
@@ -403,10 +431,132 @@ Cpufreq sysfs uses kHz; thermal sysfs uses millidegrees Celsius. Cluster clock
 debugfs ``msm8992_a53/clk_rate`` and ``msm8992_a57/clk_rate`` read back the
 actual mux/PLL settings in Hz; the auxiliary clock alone is no longer the
 current CPU rate. The boot retains kernel release 6.12.112+ and the installed
-display module load image/relocations are unchanged, so existing userdata
-can test this boot without replacing modules or reflashing the filesystem.
+CPU-only display module load image/relocations were unchanged. That older
+CPU-only boot did not require a module update; the radio boot does.
 For the diagnostic variant, validate with
 ``python3 scripts/check-debian-images.py --boot-only --dtb build/libra-voltage-observe.dtb``.
+
+Wi-Fi and Bluetooth first-test support
+-------------------------------------
+
+The selected factory x11 DTB uses QCA6174 WLAN on PCIe0 at fc520000 and Rome
+Bluetooth on BLSP2 UART2 at f995e000 (GPIO45--48). GPIO113 is WLAN_EN;
+GPIO112/54/53 are all-high PCIe boot straps. PM8994 GPIO19 controls BT_EN.
+A single fixed regulator owns the shared PA switch on PM8994 GPIO9, with the
+factory 4 ms startup delay. WLAN and Bluetooth each hold independent votes
+on this switch, S4 IO and L30 crystal supplies. WLAN follows PA/IO/crystal,
+then each bootstrap high for 10 ms, then WLAN_EN and 10 ms. Straps stay low
+before activation and return low before IO power removal. Bluetooth follows IO/crystal/PA, then reset low/high
+with 50 ms each and 100 ms before supply removal.
+
+The new PCIe host follows the OEM aperture, MSI/INTx IRQs, auxiliary clock,
+GDSC/LDO and SCM device11 sequence. Target snapshots showed both outer
+PHY reset (GCC+1b18) and PIPE reset (GCC+1b14) asserted. The outer reset is now
+released before strict CCF AUX clock enable checks; the PIPE reset is released
+after PHY programming and before PIPE clock activation, matching the OEM
+PIPE branch reset operation. A separate PHY driver applies all 48 factory
+vbg-opt 20nm register writes in order. GCC now models PIPE as the PHY's 125 MHz output,
+rather than an XO-derived clock. The initial Gen1 restriction has been
+removed; the host retains the hardware's default link capability as OEM does.
+No interconnect driver or deep PCIe suspend/hotplug support is added.
+
+Target build66 snapshots confirmed GDSC on, LDO on, outer reset released,
+AUX M/N configured, and the AUX root running, but the AUX branch remained gated
+before PHY/link initialization. The OEM branch callback warns but continues
+through this phase. MSM8992 AUX now uses an initial request/delay policy;
+AUX and PIPE running/enable bits are polled with a bounded timeout after
+LTSSM activation. The delay is scoped to MSM8992; halted clocks after startup
+still fail probe. Build67 reached PHY readiness and confirmed both AUX and
+PIPE running, but only the Root Port enumerated. Comparison with factory
+``pci-msm.c`` found the LTSSM enable belongs to PARF+0x1b0 bit8; the first
+implementation incorrectly used the older controller's ELBI+0x04 bit0.
+The MSM8992 operations now select the existing PARF callback. A single
+post-training snapshot records PARF, ELBI and DBI link state. Endpoint
+enumeration still requires phone validation.
+
+Build68 confirmed PARF LTSSM bit8 set, but the sampled DBI LTSSM state was
+Detect.Active (1), ELBI lacked XMLH_LINK_UP and no endpoint enumerated.
+Touch input remained functional after this test. A further clock comparison
+found the factory ``pcie_pipe_source_val`` is 2, while the initial mainline
+mapping incorrectly used 0. PIPE sources now model reset-state XO as 0 and
+the PHY output as 2, so the reset source is not reported as a 125 MHz PHY
+clock. Tests derive expected selector values from the unmodified factory
+clock driver and reproduce the wrong-selector case. GCC PIPE CMD/CFG are
+included in the staged snapshots; phone verification remains necessary.
+
+Build69 confirmed PIPE CFG=0x201 and both clock roots running. The sampled
+LTSSM advanced to Polling.Active (3), but no endpoint enumerated; display and
+touch remained functional. The next delivery sets the OEM 4096-byte MRRS
+before LTSSM and delays the OEM N_FTS bit15 update until the link is up.
+The PHY's debugfs ``status`` file reads selected factory-dump registers under
+the PHY mutex and refuses MMIO while powered off. Its PLL/reset, RX signal,
+PCS and revision readings are for diagnosis, not proof of a working link.
+
+Build70 confirmed MRRS=4096 and hardware-default Gen2 capability, but remained
+in Polling.Active without an endpoint. PHY PCS_STATUS=0x84 passed the OEM
+ready check (bit6 clear); RX_RX_SIGDET read zero. The CNSS initial-resource
+path powers all three WLAN rails before driving the straps high. The first
+implementation had instead raised them during regulator probe, before enabling its supply votes.
+Bootstrap high transitions now occur inside the powered enable callback, and
+disable clears them before removing IO. This matches the factory initial
+sequence and avoids driving high strap signals into an unpowered IO supply.
+Build71 verified Gen1 x1 link-up and the QCA6174 hw3.2 endpoint 168c:003e.
+The original board and firmware were accepted by ath10k. Following the OEM
+OTP return policy enabled association, DHCP and SSH over 5 GHz Wi-Fi.
+
+
+The firmware extraction script reads the supplied ``NON-HLOS.bin`` and
+``BTFM.bin`` as FAT16 without modifying or mounting either image. It wraps
+unchanged ``qwlan30.bin`` and ``otp30.bin`` in an ath10k API5 container with
+WMI TLV (4), HTT TLV (3), and the firmware-scoped ignore-OTP-result bit7.
+Factory qcacld executes OTP with param0 after board loading without rejecting
+its return code; this image returns2. The flag follows that policy while
+retaining OTP download/execution and all transfer/execute error checks. It
+does not change the OTP payload or globally enable the test-mode module
+parameter. The temporary ``skip_otp=1`` diagnostic was verified on the phone;
+the persisted firmware flag and automatic cold-boot startup await verification.
+``bdwlan30.bin`` is the board data, not ``bd30_a10.bin`` or generic data.
+The Bluetooth patch/NVM are byte-identical to the OEM files, with loader
+filenames for Rome3.2. SHA256 provenance is installed at
+``/usr/lib/firmware/libra-oem-radio-manifest.json``. No persist calibration or device identity files are copied from the flashing
+package, and no downloaded radio firmware is used.
+
+NetworkManager uses a persistent local MAC and disables Wi-Fi power saving
+for initial validation. BlueZ/Blueman, wpasupplicant, iw, rfkill, pciutils,
+regulatory data, Bluetooth input and PipeWire Bluetooth components are
+installed. The image and installer select ``regulatory.db-upstream`` via
+update-alternatives, because the kernel trusts upstream sforshee/wens keys;
+Debian's higher-priority default uses a different signature. Signature
+verification remains enabled. The signed upstream selection was verified on
+the phone. A root helper assigns a persistent local Bluetooth address only
+when the kernel reports an unconfigured controller; existing valid addresses
+are preserved. It uses the Linux management channel, compatible with Debian's
+Python3.13 HCI socket ABI. It never edits the OEM NVM file.
+
+The public boot enables ``libra.radio=1`` after build71 PCIe/firmware/Wi-Fi
+traffic validation. Recovery uses ``libra.radio=0`` with the matching kernel,
+DTB and initrd and keeps both PCIe activation and UART autoload off. Fresh
+rootfs USB networking defaults to 192.168.7.2; the old 192.168.137.2 address
+requires reconfiguration.
+
+PCIe probing is initially held; ``libra-radio.service`` activates it and UART
+Bluetooth after root, USB and native display startup. UART autoload is
+blacklisted so ``libra.radio=0`` also keeps Bluetooth off. A same-kernel
+radio-disabled recovery boot is in ``build/archive/libra-radio-disabled/``.
+Startup now requires the endpoint's registered ieee80211 PHY, rather than
+accepting an empty Root Port as radio success. Bluetooth firmware setup,
+power-on and discovery worked alongside Wi-Fi. Initial UART setup still
+logged frame-reassembly -84, and discovery logged one unexpected command
+completion length for 0x041a; these remain tracked. Pairing/audio are deferred
+at the user's request. Long-term coexistence, throughput and cold-boot startup
+remain unverified. The phone was powered off by the user when warm, before
+the persisted policy update could be installed or tested remotely.
+
+On the phone, collect ``sudo libra-radio-status`` and the radio service
+journal. Connect with ``nmcli --ask device wifi connect 'SSID'`` or the taskbar
+network applet; use Blueman or bluetoothctl for discovery and pairing. Do not
+repeat activation after a whole-device reset; retain one boot's logs first.
+
 
 Rebuild
 -------

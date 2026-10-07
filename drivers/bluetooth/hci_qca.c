@@ -227,6 +227,7 @@ struct qca_serdev {
 	u32 init_speed;
 	u32 oper_speed;
 	bool bdaddr_property_broken;
+	bool rome_regulators;
 	const char *firmware_name;
 };
 
@@ -1783,6 +1784,32 @@ static int qca_regulator_init(struct hci_uart *hu)
 	return qca_port_reopen(hu);
 }
 
+static int qca_rome_power_on(struct qca_serdev *qcadev)
+{
+	struct qca_power *power = qcadev->bt_power;
+	int ret, i;
+
+	if (power->vregs_on)
+		return 0;
+	/* Factory bluetooth-power: IO -> crystal -> shared PA switch. */
+	for (i = 0; i < power->num_vregs; i++) {
+		ret = regulator_enable(power->vreg_bulk[i].consumer);
+		if (ret)
+			goto err_rails;
+	}
+	power->vregs_on = true;
+	gpiod_set_value_cansleep(qcadev->bt_en, 0);
+	msleep(50);
+	gpiod_set_value_cansleep(qcadev->bt_en, 1);
+	msleep(50);
+	return 0;
+
+err_rails:
+	while (i--)
+		regulator_disable(power->vreg_bulk[i].consumer);
+	return ret;
+}
+
 static int qca_power_on(struct hci_dev *hdev)
 {
 	struct hci_uart *hu = hci_get_drvdata(hdev);
@@ -1811,6 +1838,10 @@ static int qca_power_on(struct hci_dev *hdev)
 
 	default:
 		qcadev = serdev_device_get_drvdata(hu->serdev);
+		if (qcadev->rome_regulators) {
+			ret = qca_rome_power_on(qcadev);
+			break;
+		}
 		if (qcadev->bt_en) {
 			gpiod_set_value_cansleep(qcadev->bt_en, 1);
 			/* Controller needs time to bootup. */
@@ -2197,6 +2228,14 @@ static void qca_power_shutdown(struct hci_uart *hu)
 
 	default:
 		gpiod_set_value_cansleep(qcadev->bt_en, 0);
+		if (qcadev->rome_regulators && power->vregs_on) {
+			int i;
+
+			msleep(100);
+			for (i = power->num_vregs - 1; i >= 0; i--)
+				regulator_disable(power->vreg_bulk[i].consumer);
+			power->vregs_on = false;
+		}
 	}
 
 	set_bit(QCA_BT_OFF, &qca->flags);
@@ -2337,6 +2376,25 @@ static int qca_serdev_probe(struct serdev_device *serdev)
 		qcadev->btsoc_type = data->soc_type;
 	else
 		qcadev->btsoc_type = QCA_ROME;
+
+	if (qcadev->btsoc_type == QCA_ROME &&
+	    device_property_present(&serdev->dev, "vddrf-supply")) {
+		static const struct qca_vreg rome_vregs[] = {
+			{ "vddio", 0 }, { "vddxo", 0 }, { "vddrf", 0 },
+		};
+
+		qcadev->bt_power = devm_kzalloc(&serdev->dev,
+					       sizeof(*qcadev->bt_power), GFP_KERNEL);
+		if (!qcadev->bt_power)
+			return -ENOMEM;
+		qcadev->bt_power->dev = &serdev->dev;
+		err = qca_init_regulators(qcadev->bt_power, rome_vregs,
+					  ARRAY_SIZE(rome_vregs));
+		if (err)
+			return dev_err_probe(&serdev->dev, err,
+					     "Rome board supplies unavailable\n");
+		qcadev->rome_regulators = true;
+	}
 
 	switch (qcadev->btsoc_type) {
 	case QCA_WCN3988:
@@ -2500,6 +2558,9 @@ static void qca_serdev_remove(struct serdev_device *serdev)
 {
 	struct qca_serdev *qcadev = serdev_device_get_drvdata(serdev);
 	struct qca_power *power = qcadev->bt_power;
+
+	if (qcadev->rome_regulators && power->vregs_on)
+		qca_power_shutdown(&qcadev->serdev_hu);
 
 	switch (qcadev->btsoc_type) {
 	case QCA_WCN3988:

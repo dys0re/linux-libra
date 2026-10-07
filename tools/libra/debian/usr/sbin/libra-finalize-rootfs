@@ -4,10 +4,10 @@ set -eu
 DEBIAN_FRONTEND=noninteractive apt-get install -y evtest libinput-tools \
  libglib2.0-bin libnotify-bin dbus-x11 procps at-spi2-core gir1.2-atspi-2.0
 chmod 755 /usr/sbin/libra-usb-gadget /usr/local/bin/libra-memory-check \
- /usr/sbin/libra-finalize-rootfs /usr/local/bin/libra-desktop-setup \
+ /usr/sbin/libra-finalize-rootfs /usr/sbin/libra-radio-status /usr/sbin/libra-radio-start /usr/sbin/libra-bluetooth-address /usr/local/bin/libra-desktop-setup \
  /usr/local/bin/libra-keyboard /usr/local/bin/libra-maximize-windows \
  /usr/local/bin/libra-desktop-action /usr/local/bin/libra-brightness
-systemctl enable libra-usb.service libra-usb-dhcp.service libra-drm.service \
+systemctl enable libra-radio.service libra-usb.service libra-usb-dhcp.service libra-drm.service \
  libra-ssh-keys.service serial-getty@ttyGS0.service
 mkdir -p /etc/libra
 printf 'Debian trixie arm64; Xfce X11; software OpenGL; userdata F2FS\n' > /etc/libra/image-release

@@ -1,0 +1,101 @@
+#!/usr/bin/python3
+# SPDX-License-Identifier: GPL-2.0-only
+"""Give only an unconfigured Rome controller a persistent per-install address.
+
+Factory NVM has a template BD_ADDR, not this phone's identity. Preserve any
+controller already configured by firmware/bootloader. Use the kernel management
+API to set a generated address, without editing factory firmware or persist.
+"""
+import ctypes
+import hashlib
+from pathlib import Path
+import socket
+import struct
+import time
+
+
+def bind_control(sock, bind=None):
+    # Python 3.13's HCI bind accepts a device ID only, so pass sockaddr_hci
+    # directly to libc for the Linux management channel (not HCI raw channel).
+    address = struct.pack('=HHH', socket.AF_BLUETOOTH, 0xffff, 3)
+    raw = ctypes.create_string_buffer(address)
+    if bind is None:
+        bind = ctypes.CDLL(None, use_errno=True).bind
+        bind.argtypes = (ctypes.c_int, ctypes.c_void_p, ctypes.c_uint)
+        bind.restype = ctypes.c_int
+    if bind(sock.fileno(), raw, len(address)):
+        err = ctypes.get_errno()
+        raise OSError(err, 'cannot bind Bluetooth management channel')
+
+
+def command(sock, opcode, index=0xffff, payload=b''):
+    sock.send(struct.pack('<HHH', opcode, index, len(payload)) + payload)
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        sock.settimeout(max(0.01, deadline - time.monotonic()))
+        packet = sock.recv(4096)
+        if len(packet) < 9:
+            continue
+        event, controller, size = struct.unpack_from('<HHH', packet)
+        if controller != index or size != len(packet) - 6:
+            continue
+        if event == 1:
+            completed, status = struct.unpack_from('<HB', packet, 6)
+        elif event == 2:
+            completed, status = struct.unpack_from('<HB', packet, 6)
+        else:
+            continue
+        if completed != opcode:
+            continue
+        if status:
+            raise RuntimeError(f'mgmt {opcode:#x}: status {status:#x}')
+        return packet[9:]
+    raise TimeoutError('Bluetooth management command timed out')
+
+
+def configure(sock, index, storage):
+    result = command(sock, 0x0036)  # Read Unconfigured Index List
+    if len(result) < 2:
+        raise ValueError('short unconfigured index list')
+    count, = struct.unpack_from('<H', result)
+    if len(result) != 2 + count * 2:
+        raise ValueError('invalid unconfigured index list length')
+    indices = struct.unpack_from('<' + 'H' * count, result, 2)
+    if index not in indices:
+        ready = command(sock, 0x0003)  # Read configured Index List
+        if len(ready) < 2 or len(ready) != 2 + 2 * struct.unpack_from('<H', ready)[0]:
+            raise ValueError('invalid configured index list')
+        configured = struct.unpack_from('<' + 'H' * ((len(ready) - 2) // 2), ready, 2)
+        if index not in configured:
+            return False  # device_add uevent can precede firmware setup completion
+        print(f'hci{index}: existing controller address preserved')
+        return True
+    if storage.exists():
+        address = storage.read_text().strip()
+    else:
+        machine_id = Path('/etc/machine-id').read_text().strip()
+        if len(machine_id) != 32:
+            raise ValueError('machine-id not initialized')
+        raw = hashlib.sha256(('libra-bluetooth:' + machine_id).encode()).digest()[:6]
+        address = ':'.join(f'{b:02X}' for b in bytes([0x02]) + raw[1:])
+        storage.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        storage.write_text(address + '\n')
+        storage.chmod(0o600)
+    raw = bytes.fromhex(address.replace(':', ''))
+    if len(raw) != 6 or raw == b'\0' * 6:
+        raise ValueError('invalid stored Bluetooth address')
+    command(sock, 0x0039, index, raw[::-1])  # Set Public Address
+    print(f'hci{index}: persistent local address {address} configured')
+    return True
+
+
+if __name__ == '__main__':
+    import sys
+    index = int(sys.argv[1].removeprefix('hci')) if len(sys.argv) == 2 else 0
+    with socket.socket(socket.AF_BLUETOOTH, socket.SOCK_RAW, socket.BTPROTO_HCI) as sock:
+        bind_control(sock)
+        deadline = time.monotonic() + 25
+        while not configure(sock, index, Path('/var/lib/libra/bluetooth-address')):
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f'hci{index} setup did not finish')
+            time.sleep(0.25)

@@ -55,7 +55,7 @@ for option in ("rdinit=/init", "root=PARTLABEL=userdata", "rootfstype=f2fs", "ms
     assert option in cmdline, option
 assert not any(x.startswith("drm.debug=") for x in cmdline)
 config = (build / "libra/.config").read_text().splitlines()
-for option in ("F2FS_FS", "SECCOMP", "SECCOMP_FILTER", "TMPFS_POSIX_ACL", "USER_NS",
+for option in ("F2FS_FS", "FILE_LOCKING", "SECCOMP", "SECCOMP_FILTER", "TMPFS_POSIX_ACL", "USER_NS",
                "USB_CONFIGFS_ACM", "USB_CONFIGFS_NCM", "INPUT_EVDEV"):
     assert f"CONFIG_{option}=y" in config, option
 data = gzip.decompress(initrd)

@@ -5,6 +5,7 @@ from pathlib import Path
 import subprocess
 
 workspace = Path(__file__).resolve().parents[4]
+subprocess.run(['python3', str(workspace / 'scripts/prepare-libra-thermal-observe-dtb.py'), '--clocks'], check=True, stdout=subprocess.DEVNULL)
 src = (workspace / 'linux/drivers/clk/qcom/clk-cpu-msm8992.c').read_text()
 body = src[src.index('static int msm8992_cluster_probe('):src.index('static unsigned long msm8992_cpu_recalc_rate(')]
 prefix = r'''

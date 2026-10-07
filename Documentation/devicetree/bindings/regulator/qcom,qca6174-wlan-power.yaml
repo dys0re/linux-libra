@@ -1,0 +1,46 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/regulator/qcom,qca6174-wlan-power.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: Qualcomm QCA6174 PCIe WLAN board power switch
+
+maintainers:
+  - Libra maintainers <codex@openai.com>
+
+description: |
+  The WLAN power switch holds the PCIe boot straps high, enables PA, IO
+  and crystal supplies in order, then asserts WLAN_EN. The PA supply can
+  be shared with Bluetooth; each consumer holds its own regulator vote.
+
+allOf:
+  - $ref: regulator.yaml#
+
+properties:
+  compatible:
+    const: qcom,qca6174-wlan-power
+  vddpa-supply:
+    description: External PA supply switch
+  vddio-supply:
+    description: 1.8 V IO supply
+  vddxo-supply:
+    description: 1.8 V crystal supply
+  enable-gpios:
+    maxItems: 1
+  bootstrap-gpios:
+    minItems: 3
+    maxItems: 3
+    description: WLAN PCIe boot straps, held high before WLAN_EN
+
+required:
+  - compatible
+  - regulator-name
+  - vddpa-supply
+  - vddio-supply
+  - vddxo-supply
+  - enable-gpios
+  - bootstrap-gpios
+
+unevaluatedProperties: false
+...

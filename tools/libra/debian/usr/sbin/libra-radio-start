@@ -1,0 +1,23 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+set -eu
+case " $(cat /proc/cmdline) " in
+ *' libra.radio=0 '*) echo 'Radio activation disabled by boot command line'; exit 0 ;;
+esac
+modprobe hci_uart
+printf 'Y\n' > /sys/module/pcie_qcom/parameters/msm8992_probe
+if [ ! -e /sys/bus/platform/devices/fc520000.pcie/driver ]; then
+ printf 'fc520000.pcie\n' > /sys/bus/platform/drivers_probe
+fi
+# Require Wi-Fi firmware registration, not just an empty PCIe Root Port.
+for attempt in 1 2 3 4 5 6 7 8 9 10; do
+ if [ -e /sys/bus/platform/devices/fc520000.pcie/driver ] &&
+    [ -d /sys/bus/pci/devices/0000:01:00.0/ieee80211 ]; then
+  udevadm settle --timeout=10
+  echo 'QCA6174 Wi-Fi firmware registered.'
+  exit 0
+ fi
+ sleep 1
+done
+echo 'QCA6174 Wi-Fi firmware did not register; run sudo libra-radio-status' >&2
+exit 1

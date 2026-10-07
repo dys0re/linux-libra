@@ -110,6 +110,31 @@
 		pinctrl-0 = <&touch_powerdown_default>;
 	};
 
+	/* One shared OEM PA switch, refcounted by WLAN and Bluetooth. */
+	radio_pa: regulator-radio-pa {
+		compatible = "regulator-fixed";
+		regulator-name = "qca6174-pa";
+		gpio = <&pm8994_gpios 9 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+		startup-delay-us = <4000>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&radio_pa_default>;
+	};
+
+	wlan_power: regulator-wlan {
+		compatible = "qcom,qca6174-wlan-power";
+		regulator-name = "qca6174-wlan";
+		vddpa-supply = <&radio_pa>;
+		vddio-supply = <&pm8994_s4>;
+		vddxo-supply = <&pm8994_l30>;
+		enable-gpios = <&tlmm 113 GPIO_ACTIVE_HIGH>;
+		bootstrap-gpios = <&tlmm 112 GPIO_ACTIVE_HIGH>,
+				  <&tlmm 54 GPIO_ACTIVE_HIGH>,
+				  <&tlmm 53 GPIO_ACTIVE_HIGH>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&wlan_default>;
+	};
+
 	cpufreq: cpufreq@f9019000 {
 		compatible = "qcom,msm8992-cpufreq";
 		reg = <0 0xf9019000 0 0x1000>, <0 0xf901a000 0 0x1000>;
@@ -511,6 +536,18 @@
 
 &blsp2_uart2 {
 	status = "okay";
+
+	bluetooth {
+		compatible = "qcom,qca6174-bt";
+		enable-gpios = <&pm8994_gpios 19 GPIO_ACTIVE_HIGH>;
+		vddio-supply = <&pm8994_s4>;
+		vddxo-supply = <&pm8994_l30>;
+		vddrf-supply = <&radio_pa>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&bt_enable_default>;
+		max-speed = <3000000>;
+		firmware-name = "btnv32.bin";
+	};
 };
 
 &mmcc {
@@ -930,4 +967,109 @@
 
 &tsens {
 	status = "okay";
+};
+
+/* OEM PCIe0 aperture and 20nm PHY, separate from the working USB PHY. */
+&soc {
+	pcie0: pcie@fc520000 {
+		compatible = "qcom,pcie-msm8992";
+		device_type = "pci";
+		reg = <0xfc520000 0x2000>, <0xff000000 0xf1d>,
+		      <0xff000f20 0xa8>, <0xff100000 0x100000>;
+		reg-names = "parf", "dbi", "elbi", "config";
+		#address-cells = <3>;
+		#size-cells = <2>;
+		#interrupt-cells = <1>;
+		bus-range = <0 0xff>;
+		linux,pci-domain = <0>;
+		num-lanes = <1>;
+		ranges = <0x01000000 0 0xff200000 0xff200000 0 0x100000>,
+			 <0x02000000 0 0xff300000 0xff300000 0 0xd00000>;
+		interrupts = <GIC_SPI 243 IRQ_TYPE_LEVEL_HIGH>;
+		interrupt-names = "msi";
+		interrupt-map-mask = <0 0 0 7>;
+		interrupt-map = <0 0 0 1 &intc 0 244 IRQ_TYPE_LEVEL_HIGH>,
+				<0 0 0 2 &intc 0 245 IRQ_TYPE_LEVEL_HIGH>,
+				<0 0 0 3 &intc 0 247 IRQ_TYPE_LEVEL_HIGH>,
+				<0 0 0 4 &intc 0 248 IRQ_TYPE_LEVEL_HIGH>;
+		clocks = <&rpmcc RPM_SMD_LN_BB_CLK>,
+			 <&gcc GCC_PCIE_0_AUX_CLK>,
+			 <&gcc GCC_PCIE_0_CFG_AHB_CLK>,
+			 <&gcc GCC_PCIE_0_MSTR_AXI_CLK>,
+			 <&gcc GCC_PCIE_0_SLV_AXI_CLK>,
+			 <&gcc PCIE_0_PHY_LDO>;
+		clock-names = "ref", "aux", "cfg", "bus_master", "bus_slave", "ldo";
+		power-domains = <&gcc PCIE_0_GDSC>;
+		resets = <&gcc PCIE_PHY_0_RESET>;
+		reset-names = "phy";
+
+		vdda-supply = <&pm8994_l12>;
+		vdda_phy-supply = <&pm8994_l28>;
+		vddpe-3v3-supply = <&wlan_power>;
+		perst-gpios = <&tlmm 35 GPIO_ACTIVE_LOW>;
+		wake-gpios = <&tlmm 37 GPIO_ACTIVE_LOW>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&pcie0_default>;
+		phys = <&pcie0_phy>;
+		phy-names = "pciephy";
+	};
+
+	pcie0_phy: phy@fc526000 {
+		compatible = "qcom,msm8992-pcie-phy";
+		reg = <0xfc526000 0x1000>;
+		clocks = <&gcc GCC_PCIE_0_PIPE_CLK>;
+		clock-names = "pipe";
+		resets = <&gcc PCIE_PHY_0_PIPE_RESET>;
+		reset-names = "pipe";
+		#phy-cells = <0>;
+		#clock-cells = <0>;
+	};
+};
+
+&gcc {
+	/* Resolve the PHY's PIPE output by name to avoid a GCC/PHY probe cycle. */
+	clocks = <&xo_board>, <&sleep_clk>, <0>;
+	clock-names = "xo", "sleep", "pcie0_pipe";
+};
+
+&tlmm {
+	wlan_default: wlan-default-state {
+		pins = "gpio112", "gpio54", "gpio53", "gpio113";
+		function = "gpio";
+		drive-strength = <16>;
+		bias-pull-down;
+	};
+
+	pcie0_default: pcie0-default-state {
+		clkreq {
+			pins = "gpio36";
+			/* GPIO36 function 2, named pci_e1 in the MSM8994 mux table. */
+			function = "pci_e1";
+			drive-strength = <2>;
+			bias-pull-up;
+		};
+		perst-wake {
+			pins = "gpio35", "gpio37";
+			function = "gpio";
+			drive-strength = <2>;
+			bias-pull-down;
+		};
+	};
+};
+
+&pm8994_gpios {
+	radio_pa_default: radio-pa-default-state {
+		pins = "gpio9";
+		function = "normal";
+		power-source = <0>;
+		qcom,drive-strength = <1>;
+		bias-disable;
+	};
+
+	bt_enable_default: bt-enable-default-state {
+		pins = "gpio19";
+		function = "normal";
+		power-source = <2>;
+		bias-pull-down;
+	};
 };

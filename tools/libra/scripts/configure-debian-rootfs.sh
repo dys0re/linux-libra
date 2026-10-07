@@ -28,7 +28,10 @@ apt-get install -y \
  fonts-noto-cjk fonts-noto-color-emoji onboard wmctrl xdotool \
  fcitx5 fcitx5-chinese-addons fcitx5-frontend-gtk3 fcitx5-frontend-qt6 \
  fcitx5-config-qt im-config firefox-esr \
- pipewire pipewire-pulse wireplumber
+ pipewire pipewire-pulse wireplumber libspa-0.2-bluetooth \
+ bluez blueman rfkill iw wireless-regdb wpasupplicant pciutils
+# Keep signature verification; this kernel trusts the upstream regdb keys.
+update-alternatives --set regulatory.db /lib/firmware/regulatory.db-upstream
 printf 'en_US.UTF-8 UTF-8\nzh_CN.UTF-8 UTF-8\n' > /etc/locale.gen
 locale-gen
 update-locale LANG=zh_CN.UTF-8
@@ -102,4 +105,4 @@ EOF
 systemctl set-default graphical.target
 systemctl disable apt-daily.timer apt-daily-upgrade.timer 2>/dev/null || true
 systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target
-systemctl enable ssh NetworkManager systemd-timesyncd lightdm
+systemctl enable ssh NetworkManager systemd-timesyncd lightdm bluetooth

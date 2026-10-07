@@ -1,0 +1,2 @@
+# Complete initial kernel setup before assigning an address to an unconfigured HCI.
+ACTION=="add", SUBSYSTEM=="bluetooth", DRIVERS=="hci_uart_qca", KERNEL=="hci[0-9]*", KERNEL!="*:*", TAG+="systemd", ENV{SYSTEMD_WANTS}+="libra-bluetooth-address@%k.service"

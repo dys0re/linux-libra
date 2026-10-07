@@ -1,0 +1,14 @@
+[Unit]
+Description=Libra QCA6174 PCIe activation after native display and USB recovery
+Wants=libra-drm.service libra-usb.service
+After=libra-drm.service libra-usb.service
+ConditionPathExists=/sys/module/pcie_qcom/parameters/msm8992_probe
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/libra-radio-start
+RemainAfterExit=yes
+TimeoutStartSec=30
+
+[Install]
+WantedBy=multi-user.target

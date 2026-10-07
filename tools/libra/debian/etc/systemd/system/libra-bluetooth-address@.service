@@ -1,0 +1,10 @@
+[Unit]
+Description=Configure Libra Bluetooth identity for %I when firmware has none
+After=bluetooth.service
+Wants=bluetooth.service
+ConditionPathExists=/usr/lib/firmware/libra-oem-radio-manifest.json
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/libra-bluetooth-address %I
+TimeoutStartSec=35

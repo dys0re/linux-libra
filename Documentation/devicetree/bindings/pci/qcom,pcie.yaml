@@ -26,6 +26,7 @@ properties:
           - qcom,pcie-ipq8064-v2
           - qcom,pcie-ipq8074
           - qcom,pcie-ipq8074-gen3
+          - qcom,pcie-msm8992
           - qcom,pcie-msm8996
           - qcom,pcie-qcs404
           - qcom,pcie-sdm845
@@ -133,6 +134,45 @@ anyOf:
       - msi-map
 
 allOf:
+  - if:
+      properties:
+        compatible:
+          contains:
+            const: qcom,pcie-msm8992
+    then:
+      properties:
+        reg:
+          maxItems: 4
+        reg-names:
+          items:
+            - const: parf
+            - const: dbi
+            - const: elbi
+            - const: config
+        clocks:
+          maxItems: 6
+        clock-names:
+          items:
+            - const: ref
+            - const: aux
+            - const: cfg
+            - const: bus_master
+            - const: bus_slave
+            - const: ldo
+        resets:
+          maxItems: 1
+        reset-names:
+          items:
+            - const: phy
+      required:
+        - power-domains
+        - vdda-supply
+        - vdda_phy-supply
+        - vddpe-3v3-supply
+        - phys
+        - phy-names
+        - resets
+        - reset-names
   - $ref: /schemas/pci/pci-host-bridge.yaml#
   - if:
       properties:
@@ -522,6 +562,7 @@ allOf:
             contains:
               enum:
                 - qcom,pcie-msm8996
+                - qcom,pcie-msm8992
     then:
       required:
         - resets

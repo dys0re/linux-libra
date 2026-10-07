@@ -17,6 +17,8 @@ if [ ! -e "$image" ]; then
 	mkfs.f2fs -f -l libra-debian "$image"
 fi
 sudo -n mount -t f2fs -o loop "$image" "$root"
+# mkfs.f2fs/old overlays may inherit the build user UID for the root inode.
+sudo -n chown 0:0 "$root"
 cleanup() {
 	for path in dev/pts dev proc sys; do
 		if mountpoint -q "$root/$path"; then sudo -n umount "$root/$path"; fi
@@ -54,7 +56,10 @@ for helper in drm-load drm-test drm-console; do
 	sudo -n install -m 755 "$workspace/scripts/alpine-$helper.sh" "$root/usr/sbin/libra-$helper"
 done
 sudo -n install -m 755 "$build/libra-kmsg" "$root/usr/sbin/libra-kmsg"
-sudo -n cp -a "$workspace/linux/tools/libra/debian/." "$root/"
+python3 "$workspace/scripts/extract-libra-radio-firmware.py"
+sudo -n cp -r --no-preserve=ownership "$build/libra-radio-firmware/." "$root/usr/lib/firmware/"
+# Overlay files originate in a user checkout; never transfer that ownership.
+sudo -n cp -r --no-preserve=ownership "$workspace/linux/tools/libra/debian/." "$root/"
 sudo -n chmod 755 "$root/usr/sbin/libra-finalize-rootfs"
 sudo -n chroot "$root" /usr/sbin/libra-finalize-rootfs
 sudo -n chroot "$root" dpkg-query -W -f='${Package}\t${Version}\t${Architecture}\n' \

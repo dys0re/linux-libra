@@ -27,6 +27,7 @@ enum {
 	P_XO,
 	P_GPLL0,
 	P_GPLL4,
+	P_PCIE_PIPE,
 };
 
 static struct clk_alpha_pll gpll0_early = {
@@ -93,6 +94,10 @@ static struct clk_alpha_pll_postdiv gpll4 = {
 static const struct parent_map gcc_xo_gpll0_map[] = {
 	{ P_XO, 0 },
 	{ P_GPLL0, 1 },
+};
+
+static const struct parent_map gcc_xo_map[] = {
+	{ P_XO, 0 },
 };
 
 static const struct clk_parent_data gcc_xo_gpll0[] = {
@@ -861,6 +866,7 @@ static struct clk_rcg2 pcie_0_aux_clk_src = {
 	.cmd_rcgr = 0x1b00,
 	.mnd_width = 8,
 	.hid_width = 5,
+	.parent_map = gcc_xo_map,
 	.freq_tbl = ftbl_pcie_0_aux_clk_src,
 	.clkr.hw.init = &(struct clk_init_data){
 		.name = "pcie_0_aux_clk_src",
@@ -873,20 +879,35 @@ static struct clk_rcg2 pcie_0_aux_clk_src = {
 };
 
 static const struct freq_tbl ftbl_pcie_pipe_clk_src[] = {
-	F(125000000, P_XO, 1, 0, 0),
+	F(125000000, P_PCIE_PIPE, 1, 0, 0),
 	{ }
+};
+
+static const struct parent_map gcc_pcie_pipe_map[] = {
+	{ P_XO, 0 },
+	{ P_PCIE_PIPE, 2 },
+};
+
+/* Factory F_EXT uses source 2; source 0 is the reset-state XO. */
+static const struct clk_parent_data gcc_xo_pcie0_pipe[] = {
+	{ .fw_name = "xo" },
+	{ .fw_name = "pcie0_pipe", .name = "pcie0_phy_pipe" },
+};
+
+static const struct clk_parent_data gcc_xo_pcie1_pipe[] = {
+	{ .fw_name = "xo" },
+	{ .fw_name = "pcie1_pipe" },
 };
 
 static struct clk_rcg2 pcie_0_pipe_clk_src = {
 	.cmd_rcgr = 0x1adc,
 	.hid_width = 5,
 	.freq_tbl = ftbl_pcie_pipe_clk_src,
+	.parent_map = gcc_pcie_pipe_map,
 	.clkr.hw.init = &(struct clk_init_data){
 		.name = "pcie_0_pipe_clk_src",
-		.parent_data = &(const struct clk_parent_data){
-				.fw_name = "xo",
-		},
-		.num_parents = 1,
+		.parent_data = gcc_xo_pcie0_pipe,
+		.num_parents = ARRAY_SIZE(gcc_xo_pcie0_pipe),
 		.ops = &clk_rcg2_ops,
 	},
 };
@@ -900,6 +921,7 @@ static struct clk_rcg2 pcie_1_aux_clk_src = {
 	.cmd_rcgr = 0x1b80,
 	.mnd_width = 8,
 	.hid_width = 5,
+	.parent_map = gcc_xo_map,
 	.freq_tbl = ftbl_pcie_1_aux_clk_src,
 	.clkr.hw.init = &(struct clk_init_data){
 		.name = "pcie_1_aux_clk_src",
@@ -915,12 +937,11 @@ static struct clk_rcg2 pcie_1_pipe_clk_src = {
 	.cmd_rcgr = 0x1b5c,
 	.hid_width = 5,
 	.freq_tbl = ftbl_pcie_pipe_clk_src,
+	.parent_map = gcc_pcie_pipe_map,
 	.clkr.hw.init = &(struct clk_init_data){
 		.name = "pcie_1_pipe_clk_src",
-		.parent_data = &(const struct clk_parent_data){
-				.fw_name = "xo",
-		},
-		.num_parents = 1,
+		.parent_data = gcc_xo_pcie1_pipe,
+		.num_parents = ARRAY_SIZE(gcc_xo_pcie1_pipe),
 		.ops = &clk_rcg2_ops,
 	},
 };
@@ -2631,6 +2652,8 @@ static const struct qcom_reset_map gcc_msm8994_resets[] = {
 	[MSS_RESET] = { 0x1680 },
 	[PCIE_PHY_0_RESET] = { 0x1b18 },
 	[PCIE_PHY_1_RESET] = { 0x1b98 },
+	[PCIE_PHY_0_PIPE_RESET] = { 0x1b14 },
+	[PCIE_PHY_1_PIPE_RESET] = { 0x1b94 },
 	[QUSB2_PHY_RESET] = { 0x04b8 },
 };
 
@@ -2662,6 +2685,11 @@ MODULE_DEVICE_TABLE(of, gcc_msm8994_match_table);
 static int gcc_msm8994_probe(struct platform_device *pdev)
 {
 	if (of_device_is_compatible(pdev->dev.of_node, "qcom,gcc-msm8992")) {
+		/* AUX is requested while PHY reset/power-down still gates its
+		 * output. The PCIe host validates it after starting the link.
+		 */
+		gcc_pcie_0_aux_clk.halt_check = BRANCH_HALT_DELAY;
+
 		/* MSM8992 features less clocks and some have different freq tables */
 		gcc_msm8994_desc.clks[UFS_AXI_CLK_SRC] = NULL;
 		gcc_msm8994_desc.clks[GCC_LPASS_Q6_AXI_CLK] = NULL;

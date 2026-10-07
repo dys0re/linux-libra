@@ -5,6 +5,7 @@ from pathlib import Path
 import subprocess
 
 workspace = Path(__file__).resolve().parents[4]
+subprocess.run(['python3', str(workspace / 'scripts/prepare-libra-thermal-observe-dtb.py')], check=True, stdout=subprocess.DEVNULL)
 source = (workspace / 'linux/drivers/thermal/qcom/tsens.c').read_text()
 body = source[source.index('static int tsens_probe('):source.index('static void tsens_remove(')]
 prefix = r'''

@@ -13,6 +13,8 @@ cmdline='rdinit=/init console=tty0 panic=0 root=PARTLABEL=userdata rootfstype=f2
 cmdline="$cmdline msm.vram=32m clk_smd_rpm.skip_scaling=1 msm.fbdev=1 msm.mdp5_core_clk_rate=200000000"
 cmdline="$cmdline log_buf_len=2M loglevel=4 clk_ignore_unused pd_ignore_unused libra.drm_native=1 libra.drm_auto=1 consoleblank=0"
 cmdline="$cmdline qcom_tsens.msm8992_probe=1 clk_cpu_msm8992.clusters_probe=1 qcom_msm8992_cpufreq.enable=1"
+# PCIe/firmware and Wi-Fi traffic verified on the phone; recovery boot stays archived.
+cmdline="$cmdline libra.radio=1"
 python3 "$workspace/scripts/pack-factory-boot.py" \
  --factory "$workspace/libra_images_6.1.7_20151221.0000.11_5.1_cn/images/boot.img" \
  --kernel "$build/libra/arch/arm64/boot/Image" \
