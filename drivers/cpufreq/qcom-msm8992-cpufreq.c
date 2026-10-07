@@ -36,6 +36,11 @@ static bool cci_test;
 module_param(cci_test, bool, 0400);
 MODULE_PARM_DESC(cci_test, "Expose manual 300/384 MHz CCI selection at the verified 600 MHz CPU boot rates");
 
+/* Experimental branch: retain the factory plan and offset the final rail vote. */
+static int voltage_offset_uv = -50000;
+module_param(voltage_offset_uv, int, 0400);
+MODULE_PARM_DESC(voltage_offset_uv, "Experimental CPU/CCI supply offset: -50000 uV by default, 0 restores factory voltages");
+
 struct msm8992_cpufreq {
 	struct device *dev;
 	struct clk *cpu[2], *cci;
@@ -44,6 +49,7 @@ struct msm8992_cpufreq {
 	struct cpufreq_frequency_table table[2][MSM8992_MAX_CORNERS + 1];
 	struct mutex lock;
 	struct regmap *saw[2];
+	int voltage_offset_uv;
 };
 
 static int msm8992_voltage_report_show(struct seq_file *seq, void *unused)
@@ -217,6 +223,9 @@ static int msm8992_target(struct cpufreq_policy *policy, unsigned int index)
 			    msm8992_voltage(&d->plan[i], 600000000));
 	}
 	uv[0] = max(uv[0], msm8992_cci_voltage(&d->plan[0], new_cci));
+	/* Apply once to each final vote, including the auxiliary floor and shared CCI. */
+	for (i = 0; i < 2; i++)
+		uv[i] = (int)uv[i] + d->voltage_offset_uv;
 	/* Raise both supplies first. Keep the old vote until each clock settles. */
 	for (i = 0; i < 2; i++) {
 		ret = msm8992_set_voltage(d, i, max(uv[i], old_uv[i]));
@@ -442,6 +451,8 @@ static int msm8992_cpufreq_probe(struct platform_device *pdev)
 		dev_info(dev, "MSM8992 DVFS held for manual activation\n");
 		return -ENODEV;
 	}
+	if (voltage_offset_uv != 0 && voltage_offset_uv != -50000)
+		return dev_err_probe(dev, -EINVAL, "voltage offset must be 0 or -50000 uV\n");
 
 	/* High frequency support requires the calibrated thermal zones first. */
 	if (!observe) {
@@ -453,6 +464,7 @@ static int msm8992_cpufreq_probe(struct platform_device *pdev)
 	if (!d)
 		return -ENOMEM;
 	d->dev = dev;
+	d->voltage_offset_uv = voltage_offset_uv;
 	mutex_init(&d->lock);
 	if (observe)
 		dev_info(dev, "voltage observation: reading corrected CPR calibration\n");
@@ -571,6 +583,8 @@ static int msm8992_cpufreq_probe(struct platform_device *pdev)
 		readl(base + 0x90);
 	}
 	msm8992_dvfs = d;
+	dev_info(dev, "MSM8992 voltage offset: %d uV on APC0/CCI and APC1\n",
+		 d->voltage_offset_uv);
 	ret = cpufreq_register_driver(&msm8992_driver);
 	if (!ret) {
 		dev_info(dev, "MSM8992 cpufreq ready: calibrated factory plans, CPU cooling and schedutil\n");

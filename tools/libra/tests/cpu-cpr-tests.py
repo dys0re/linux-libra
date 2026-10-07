@@ -127,6 +127,8 @@ print("PASS exact OEM CPR tables; primary/redundant packing, revision/RO tuple m
 
 # Execute the real transaction functions against fake supplies/clocks.
 driver = (workspace / "linux/drivers/cpufreq/qcom-msm8992-cpufreq.c").read_text()
+assert re.search(r'static int voltage_offset_uv = -50000;', driver)
+assert 'module_param(voltage_offset_uv, int, 0400);' in driver
 body = driver[driver.index("struct msm8992_cpufreq {"):driver.index("static int msm8992_voltage_report_show")] + driver[driver.index("static struct msm8992_cpufreq *msm8992_dvfs"):driver.index("static int msm8992_policy_init")]
 stubs = r"""
 #include <assert.h>
@@ -153,18 +155,22 @@ static struct msm8992_cpufreq state;
 static int fail_cpu,fail_cci;
 static unsigned long clk_get_rate(struct clk*c){return c->hz;}
 static int regulator_get_voltage(struct regulator*r){return r->uv;}
+static unsigned required(unsigned uv){return (int)uv+state.voltage_offset_uv;}
 static void check_volts(void){
- for(unsigned c=0;c<2;c++)assert(rails[c].uv>=msm8992_voltage(&state.plan[c],clocks[c].hz));
- assert(rails[0].uv>=msm8992_cci_voltage(&state.plan[0],clocks[2].hz));
+ for(unsigned c=0;c<2;c++)assert(rails[c].uv>=required(msm8992_voltage(&state.plan[c],clocks[c].hz)));
+ assert(rails[0].uv>=required(msm8992_cci_voltage(&state.plan[0],clocks[2].hz)));
 }
 static int clk_set_rate(struct clk*c,unsigned long hz){
- if(c->id==2){if(fail_cci==1)return -EIO;if((fail_cci==2&&hz!=300000000&&hz!=600000000)||(fail_cci==3&&hz==134400000)){c->hz=150000000;return -EIO;}assert(rails[0].uv>=msm8992_cci_voltage(&state.plan[0],hz));}
- else{assert(rails[c->id].uv>=msm8992_voltage(&state.plan[c->id],hz));assert(rails[c->id].uv>=msm8992_voltage(&state.plan[c->id],600000000));if(fail_cpu){c->hz=600000000;return -ETIMEDOUT;}}
+ if(c->id==2){if(fail_cci==1)return -EIO;if((fail_cci==2&&hz!=300000000&&hz!=600000000)||(fail_cci==3&&hz==134400000)){c->hz=150000000;return -EIO;}assert(rails[0].uv>=required(msm8992_cci_voltage(&state.plan[0],hz)));}
+ else{assert(rails[c->id].uv>=required(msm8992_voltage(&state.plan[c->id],hz)));assert(rails[c->id].uv>=required(msm8992_voltage(&state.plan[c->id],600000000)));if(fail_cpu){c->hz=600000000;return -ETIMEDOUT;}}
  c->hz=hz;check_volts();return 0;
 }
 static int regulator_set_voltage(struct regulator*r,unsigned lo,unsigned hi){assert(lo==hi);r->uv=lo;check_volts();return 0;}
-int main(void){
+static void run(int offset){
  u8 fuses[0x500]={0};
+ memset(&state,0,sizeof(state));state.voltage_offset_uv=offset;
+ clocks[0].hz=clocks[1].hz=600000000;clocks[2].hz=300000000;
+ rails[0].uv=rails[1].uv=1180000;fail_cpu=fail_cci=0;
  assert(!msm8992_cpr_calculate(fuses,0,1,&state.plan[0]));assert(!msm8992_cpr_calculate(fuses,1,0,&state.plan[1]));
  for(unsigned c=0;c<2;c++){state.cpu[c]=&clocks[c];state.apc[c]=&rails[c];}
  state.cci=&clocks[2];
@@ -173,20 +179,42 @@ int main(void){
  assert(!msm8992_target(&p0,1));assert(clocks[0].hz==1440000000&&clocks[2].hz==787200000);
  assert(!msm8992_target(&p4,1));assert(clocks[1].hz==1824000000);
  assert(!msm8992_target(&p0,0));assert(clocks[0].hz==384000000&&clocks[2].hz==787200000);
- assert(rails[0].uv==msm8992_cci_voltage(&state.plan[0],787200000));
+ assert(rails[0].uv==required(msm8992_cci_voltage(&state.plan[0],787200000)));
  assert(!msm8992_target(&p4,0));assert(clocks[2].hz==134400000);
- assert(rails[0].uv==msm8992_voltage(&state.plan[0],600000000));
+ assert(rails[0].uv==required(msm8992_voltage(&state.plan[0],600000000)));
  fail_cci=1;assert(msm8992_target(&p0,1)==-EIO);assert(clocks[0].hz==384000000);check_volts();
  fail_cci=0;fail_cpu=1;assert(msm8992_target(&p0,1)==-ETIMEDOUT);assert(clocks[0].hz==600000000);check_volts();
  fail_cpu=0;assert(!msm8992_target(&p0,0));assert(!msm8992_target(&p4,1));check_volts();
  fail_cci=2;assert(msm8992_target(&p4,0)==-EIO);assert(clocks[0].hz==600000000&&clocks[1].hz==600000000&&clocks[2].hz==300000000);check_volts();
  fail_cci=0;assert(!msm8992_target(&p0,1));assert(!msm8992_target(&p4,1));assert(!msm8992_target(&p0,0));
  fail_cci=3;assert(msm8992_target(&p4,0)==-EIO);assert(clocks[0].hz==384000000&&clocks[1].hz==1824000000&&clocks[2].hz==787200000);check_volts();
+ fail_cci=0;
+ struct msm8992_cpr_plan original[2]={state.plan[0],state.plan[1]};
+ struct cpufreq_frequency_table full[2][MSM8992_MAX_CORNERS+1];unsigned count[2]={0};
+ for(unsigned c=0;c<2;c++)for(unsigned i=0;i<state.plan[c].count;i++){
+  if(c&&state.plan[c].hz[i]==633600000)full[c][count[c]++].frequency=600000;
+  if(state.plan[c].hz[i]>=384000000)full[c][count[c]++].frequency=state.plan[c].hz[i]/1000;
+ }
+ p0.freq_table=full[0];p4.freq_table=full[1];
+ /* Every pair exercises the shared CCI vote and both auxiliary voltage floors. */
+ for(unsigned a=0;a<count[0];a++)for(unsigned b=0;b<count[1];b++){
+  assert(!msm8992_target(&p0,a));assert(!msm8992_target(&p4,b));
+  assert(clocks[0].hz==full[0][a].frequency*1000UL&&clocks[1].hz==full[1][b].frequency*1000UL);
+  for(unsigned c=0;c<2;c++){
+   unsigned expected=max(msm8992_voltage(&state.plan[c],clocks[c].hz),msm8992_voltage(&state.plan[c],600000000));
+   if(!c)expected=max(expected,msm8992_cci_voltage(&state.plan[0],clocks[2].hz));
+   assert(rails[c].uv==required(expected));
+  }
+ }
+ assert(!memcmp(original,state.plan,sizeof(original)));
+}
+int main(void){
+ run(0);run(-50000);
  (void)warnings;
- puts("PASS real DVFS transaction: voltage before high clocks, low clocks before voltage reduction, shared A53/CCI vote with A57 at 1.824GHz, failures retain safe voltage/auxiliary frequency");
+ puts("PASS real DVFS transaction at factory and -50mV: every CPU OPP pair, unchanged calibration, offset once after shared CCI/auxiliary votes, voltage/clock ordering and failure recovery");
 }
 """
 source = build / "cpu-cpr-transaction.c"
-source.write_text(prefix + header + stubs + body + main)
+source.write_text(prefix + '#include <string.h>\n' + header + stubs + body + main)
 subprocess.run(["cc", "-std=gnu11", "-Wall", "-Wextra", "-Werror", "-Wno-unused-variable", str(source), "-o", str(source.with_suffix(""))], check=True)
 subprocess.run([str(source.with_suffix(""))], check=True)
