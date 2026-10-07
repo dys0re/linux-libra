@@ -1,0 +1,15 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+set -eu
+if [ ! -d /sys/class/power_supply/battery ]; then
+ printf 'Battery driver is not registered; boot the matching battery kernel.\n' >&2
+ exit 1
+fi
+for supply in battery usb; do
+ printf '\n%s\n' "$supply"
+ cat "/sys/class/power_supply/$supply/uevent"
+done
+if command -v upower >/dev/null 2>&1; then
+ printf '\nDesktop battery\n'
+ upower -i /org/freedesktop/UPower/devices/battery_battery
+fi

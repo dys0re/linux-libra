@@ -1,0 +1,48 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/power/supply/qcom,pmi8994-battery.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: Qualcomm PMI8994 firmware-calibrated battery monitor
+
+maintainers:
+  - Sebastian Reichel <sre@kernel.org>
+
+description: |
+  The PMI8994 gauge at 0x4000 uses the SRAM interface at 0x4400 and the
+  charger at 0x1000, all on the same SPMI USID. The driver keeps the firmware
+  profile and autonomous charger configuration. Software current requests
+  are limited to the smaller of the board rating and inherited charger limit.
+
+properties:
+  compatible:
+    const: qcom,pmi8994-battery
+  reg:
+    items:
+      - const: 0x4000
+  interrupts:
+    maxItems: 6
+  interrupt-names:
+    items:
+      - const: delta-soc
+      - const: low-soc
+      - const: batt-missing
+      - const: usb-source
+      - const: batt-hot
+      - const: batt-cold
+  qcom,fast-charge-current-max-microamp:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    minimum: 300000
+    maximum: 1800000
+  qcom,battery-voltage-max-microvolt:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    const: 4400000
+
+required:
+  - compatible
+  - reg
+  - qcom,fast-charge-current-max-microamp
+  - qcom,battery-voltage-max-microvolt
+
+additionalProperties: false

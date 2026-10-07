@@ -29,7 +29,8 @@ apt-get install -y \
  fcitx5 fcitx5-chinese-addons fcitx5-frontend-gtk3 fcitx5-frontend-qt6 \
  fcitx5-config-qt im-config firefox-esr \
  pipewire pipewire-pulse wireplumber libspa-0.2-bluetooth \
- bluez blueman rfkill iw wireless-regdb wpasupplicant pciutils
+ bluez blueman rfkill iw wireless-regdb wpasupplicant pciutils \
+ upower xfce4-power-manager xfce4-power-manager-plugins
 # Keep signature verification; this kernel trusts the upstream regdb keys.
 update-alternatives --set regulatory.db /lib/firmware/regulatory.db-upstream
 printf 'en_US.UTF-8 UTF-8\nzh_CN.UTF-8 UTF-8\n' > /etc/locale.gen

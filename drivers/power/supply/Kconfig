@@ -1018,4 +1018,12 @@ config FUEL_GAUGE_MM8013
 	  the state of charge, temperature, cycle count, actual and design
 	  capacity, etc.
 
+config BATTERY_QCOM_PMI8994
+	tristate "Qualcomm PMI8994 battery and USB supply"
+	depends on MFD_SPMI_PMIC
+	help
+	  Expose the running PMI8994 fuel gauge and charger through the power
+	  supply class, preserving firmware calibration and charger protection.
+	  Charge current may be reduced from the inherited firmware limit.
+
 endif # POWER_SUPPLY

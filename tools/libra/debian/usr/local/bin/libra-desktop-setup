@@ -5,6 +5,7 @@ xset s off
 xset -dpms
 # Apply defaults once. Subsequent sessions preserve the user's changes.
 marker="$HOME/.config/libra/desktop-initialized"
+reload_panel=0
 if [ ! -e "$marker" ]; then
  setprop() {
   xfconf-query -c "$1" -p "$2" -n -t "$3" -s "$4"
@@ -53,10 +54,10 @@ if [ ! -e "$marker" ]; then
  setprop xfce4-panel /plugins/plugin-7 string systray
  mkdir -p "${marker%/*}"
  touch "$marker"
- # The default second panel can remain alive after /panels changes at login.
- # Reload the panel only on this first configuration pass.
- xfce4-panel --restart
+ reload_panel=1
 fi
+# Load the completed panel layout, including the battery plugin, in one restart.
+LIBRA_PANEL_RELOAD="$reload_panel" /usr/local/bin/libra-battery-setup
 gsettings set org.onboard.auto-show enabled false
 gsettings set org.onboard start-minimized true
 gsettings set org.onboard.window docking-enabled true

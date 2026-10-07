@@ -2,11 +2,13 @@
 # SPDX-License-Identifier: GPL-2.0-only
 set -eu
 DEBIAN_FRONTEND=noninteractive apt-get install -y evtest libinput-tools \
- libglib2.0-bin libnotify-bin dbus-x11 procps at-spi2-core gir1.2-atspi-2.0
+ libglib2.0-bin libnotify-bin dbus-x11 procps at-spi2-core gir1.2-atspi-2.0 \
+ upower xfce4-power-manager xfce4-power-manager-plugins
 chmod 755 /usr/sbin/libra-usb-gadget /usr/local/bin/libra-memory-check \
  /usr/sbin/libra-finalize-rootfs /usr/sbin/libra-radio-status /usr/sbin/libra-radio-start /usr/sbin/libra-bluetooth-address /usr/local/bin/libra-desktop-setup \
  /usr/local/bin/libra-keyboard /usr/local/bin/libra-maximize-windows \
- /usr/local/bin/libra-desktop-action /usr/local/bin/libra-brightness
+ /usr/local/bin/libra-desktop-action /usr/local/bin/libra-brightness \
+ /usr/local/bin/libra-battery-setup /usr/sbin/libra-battery-status
 systemctl enable libra-radio.service libra-usb.service libra-usb-dhcp.service libra-drm.service \
  libra-ssh-keys.service serial-getty@ttyGS0.service
 mkdir -p /etc/libra
@@ -44,12 +46,7 @@ EOF
 cat > /home/libra/.xinputrc <<'EOF'
 run_im fcitx5
 EOF
-cat > /home/libra/.config/autostart/xfce4-power-manager.desktop <<'EOF'
-[Desktop Entry]
-Type=Application
-Name=Power manager
-Hidden=true
-EOF
+rm -f /home/libra/.config/autostart/xfce4-power-manager.desktop
 cat > /home/libra/.config/autostart/onboard-autostart.desktop <<'EOF'
 [Desktop Entry]
 Type=Application

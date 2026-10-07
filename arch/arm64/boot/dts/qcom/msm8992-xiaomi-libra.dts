@@ -915,6 +915,26 @@
 	qcom,enabled-strings = <0 1>;
 };
 
+&spmi_bus {
+	pmic@2 {
+		battery@4000 {
+			compatible = "qcom,pmi8994-battery";
+			reg = <0x4000>;
+			/* OEM x11 fastchg-current-ma=1800, float-voltage-mv=4400. */
+			qcom,fast-charge-current-max-microamp = <1800000>;
+			qcom,battery-voltage-max-microvolt = <4400000>;
+			interrupts = <2 0x40 4 IRQ_TYPE_EDGE_BOTH>,
+				     <2 0x40 1 IRQ_TYPE_EDGE_BOTH>,
+				     <2 0x41 6 IRQ_TYPE_EDGE_BOTH>,
+				     <2 0x13 2 IRQ_TYPE_EDGE_BOTH>,
+				     <2 0x12 0 IRQ_TYPE_EDGE_BOTH>,
+				     <2 0x12 2 IRQ_TYPE_EDGE_BOTH>;
+			interrupt-names = "delta-soc", "low-soc", "batt-missing",
+					  "usb-source", "batt-hot", "batt-cold";
+		};
+	};
+};
+
 &tlmm {
 	touch_default: touch-state {
 		pins = "gpio60", "gpio61";
