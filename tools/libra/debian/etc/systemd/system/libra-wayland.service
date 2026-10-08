@@ -1,0 +1,26 @@
+[Unit]
+Description=Libra manual Xfce Wayland test session
+Requires=libra-drm.service
+After=libra-drm.service systemd-user-sessions.service
+Conflicts=lightdm.service
+Before=lightdm.service
+
+[Service]
+User=libra
+PAMName=login
+TTYPath=/dev/tty8
+TTYReset=yes
+TTYVHangup=yes
+StandardInput=tty-fail
+StandardOutput=journal
+StandardError=journal
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+Environment=XDG_SESSION_TYPE=wayland
+Environment=WLR_BACKENDS=drm,libinput
+Environment=WLR_DRM_DEVICES=/dev/dri/card0
+UnsetEnvironment=DISPLAY WAYLAND_DISPLAY
+ExecStartPre=+/usr/bin/busybox chvt 8
+ExecStart=/usr/local/bin/libra-xfce-wayland-session
+ExecStop=+/usr/sbin/libra-wayland-exit $MAINPID
+ExecStopPost=+/usr/sbin/libra-wayland-return
+TimeoutStopSec=15

@@ -1,0 +1,43 @@
+Libra Xfce Wayland test session
+
+The normal boot still uses Xfce X11. To switch manually, save open work,
+then run from USB serial, SSH, or a local terminal:
+
+    sudo libra-wayland start
+
+To return to the normal desktop:
+
+    sudo libra-wayland stop
+
+Closing the test session also returns to LightDM/X11. The Wayland service
+is not enabled at boot. Its settings and caches live under
+~/.config/libra-wayland and ~/.cache/libra-wayland, separate from X11.
+
+Xfce 4.20's Wayland support is experimental. The compositor is Labwc;
+xfwm4 is retained for X11. Mesa EGL/GLES and Xwayland GLX use FD418.
+GTK uses Wayland with X11 fallback, and Qt5/Qt6 Wayland plugins are included.
+Applications that require X11 use Xwayland.
+
+The DSI output uses 1080x1920 at scale 2. In a test-session terminal,
+rotation can be changed with:
+
+    wlr-randr --output DSI-1 --transform 90
+    wlr-randr --output DSI-1 --transform normal
+
+Touch is mapped to DSI-1 by the compositor. The keyboard button toggles
+wvkbd, which uses Wayland's virtual-keyboard and layer-shell protocols.
+The same button uses Onboard in X11. Ordinary windows maximize through
+Labwc rules rather than the X11 wmctrl polling helper.
+
+The display has no IOMMU and uses a 32MiB physical scanout arena.
+Three full-screen GBM buffers fit only when the hardware cursor buffers
+are omitted. This test session therefore uses a GPU-composited cursor and
+disables application direct scanout; application buffers use mapped system
+pages, and the final compositor buffers remain physically contiguous.
+GPU rendering and atomic KMS/page flips remain enabled. The X11 settings,
+CPU voltage policy, GPU frequencies, kernel, and boot remain unchanged.
+
+Sources:
+https://xfce.org/about/tour
+https://labwc.github.io/getting-started.html
+https://labwc.github.io/labwc-config.5.html

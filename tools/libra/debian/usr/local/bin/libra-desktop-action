@@ -1,4 +1,10 @@
 #!/bin/sh
+if [ "${XDG_SESSION_TYPE:-}" = wayland ]; then
+ case "${1:-}" in
+  close) exec wtype -M alt -k F4 -m alt ;;
+  desktop) exec wtype -M logo d -m logo ;;
+ esac
+fi
 case "${1:-}" in
  close) exec wmctrl -c :ACTIVE: ;;
  desktop) exec wmctrl -k on ;;

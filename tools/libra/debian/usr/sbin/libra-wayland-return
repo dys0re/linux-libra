@@ -1,0 +1,9 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+# Restore the normal desktop when a manual test exits, except during shutdown.
+# A restart already schedules the next Wayland session.
+job=$(systemctl list-jobs --no-legend --plain | awk '$2 == "libra-wayland.service" {print $3}')
+case "$job" in start|restart) exit 0 ;; esac
+if systemctl is-active --quiet graphical.target; then
+ exec systemctl --no-block start lightdm.service
+fi

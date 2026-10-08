@@ -1,0 +1,30 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+# Separate test-session settings from the accepted X11 desktop.
+set -eu
+. /etc/X11/Xsession.d/60libra-gpu
+unset LIBGL_ALWAYS_SOFTWARE GALLIUM_DRIVER QT_QUICK_BACKEND QT_SCALE_FACTOR QT_AUTO_SCREEN_SCALE_FACTOR
+export XDG_CONFIG_HOME="$HOME/.config/libra-wayland"
+export XDG_CACHE_HOME="$HOME/.cache/libra-wayland"
+export GDK_SCALE=1 QT_QPA_PLATFORM=wayland MOZ_ENABLE_WAYLAND=1
+export GTK_IM_MODULE=fcitx QT_IM_MODULE=fcitx XMODIFIERS=@im=fcitx
+export LIBSEAT_BACKEND=logind WLR_RENDERER=gles2
+# Keep the three full-screen GBM buffers within the 32MiB physical arena.
+# Cursor and client surfaces are GPU-composited using ordinary mapped pages.
+export WLR_NO_HARDWARE_CURSORS=1 WLR_SCENE_DISABLE_DIRECT_SCANOUT=1
+export XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=XFCE
+mkdir -p "$XDG_CONFIG_HOME/xfce4/labwc" "$XDG_CONFIG_HOME/autostart" "$XDG_CACHE_HOME"
+for file in rc.xml environment; do
+ if [ ! -e "$XDG_CONFIG_HOME/xfce4/labwc/$file" ]; then
+  cp "/etc/libra/wayland/$file" "$XDG_CONFIG_HOME/xfce4/labwc/$file"
+ fi
+done
+# Keep startxfce4 from replacing the compositor environment with its example.
+touch "$XDG_CONFIG_HOME/xfce4/labwc/lock"
+cp /etc/skel/.config/autostart/libra-desktop.desktop "$XDG_CONFIG_HOME/autostart/"
+panel="$XDG_CONFIG_HOME/xfce4/xfconf/xfce-perchannel-xml"
+mkdir -p "$panel"
+if [ ! -e "$panel/xfce4-panel.xml" ]; then
+ cp /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml "$panel/"
+fi
+exec startxfce4 --wayland

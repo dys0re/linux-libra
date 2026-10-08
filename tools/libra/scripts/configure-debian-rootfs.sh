@@ -21,7 +21,8 @@ apt-get install -y \
  openssh-server sudo curl wget ca-certificates locales tzdata less nano \
  f2fs-tools util-linux busybox-static libdrm-tests \
  xserver-xorg-core xserver-xorg-input-libinput xinit xauth x11-xserver-utils \
- x11-utils x11-apps xvfb mesa-utils libgl1-mesa-dri libegl-mesa0 wayland-utils xwayland \
+ x11-utils x11-apps xvfb mesa-utils libgl1-mesa-dri libegl-mesa0 wayland-utils xwayland wayland-protocols \
+ labwc wlr-randr wvkbd wtype grim qt6-wayland qtwayland5 \
  lightdm lightdm-gtk-greeter xfce4-session xfce4-panel xfce4-settings \
  xfwm4 xfdesktop4 thunar xfce4-terminal xfce4-appfinder mousepad ristretto \
  xfce4-notifyd xfce4-taskmanager adwaita-icon-theme fonts-dejavu-core \

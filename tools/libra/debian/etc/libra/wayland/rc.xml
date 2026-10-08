@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<labwc_config>
+  <core><adaptiveSync>no</adaptiveSync><allowTearing>no</allowTearing></core>
+  <theme><name>Adwaita</name><cornerRadius>0</cornerRadius><font name="Noto Sans CJK SC" size="12"/></theme>
+  <desktops number="4"/>
+  <keyboard>
+    <default/>
+    <keybind key="W-Return"><action name="Execute" command="xfce4-terminal"/></keybind>
+    <keybind key="W-q"><action name="Close"/></keybind>
+  </keyboard>
+  <touch deviceName="Synaptics S3708AR" mapToOutput="DSI-1" mouseEmulation="no"/>
+  <windowRules>
+    <windowRule type="normal"><action name="Maximize"/></windowRule>
+  </windowRules>
+</labwc_config>

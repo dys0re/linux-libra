@@ -1,0 +1,4 @@
+# Hardware rendering and output scaling are set by the session wrapper/setup.
+XKB_DEFAULT_LAYOUT=us
+XCURSOR_THEME=Adwaita
+XCURSOR_SIZE=32

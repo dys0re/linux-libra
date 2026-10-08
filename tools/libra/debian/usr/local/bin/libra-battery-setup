@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: GPL-2.0-only
 # Run inside the user's existing Xfce session, including an upgraded userdata.
 set -eu
-marker="$HOME/.config/libra/battery-initialized"
-panel_marker="$HOME/.config/libra/battery-panel-v2"
+marker="${XDG_CONFIG_HOME:-$HOME/.config}/libra/battery-initialized"
+panel_marker="${XDG_CONFIG_HOME:-$HOME/.config}/libra/battery-panel-v2"
 reload_panel=${LIBRA_PANEL_RELOAD:-0}
 if [ ! -e "$marker" ]; then
  setprop() {
@@ -49,7 +49,7 @@ if [ ! -e "$panel_marker" ] || [ "$reload_panel" = 1 ]; then
  fi
  reload_panel=1
 fi
-rm -f "$HOME/.config/autostart/xfce4-power-manager.desktop"
+rm -f "${XDG_CONFIG_HOME:-$HOME/.config}/autostart/xfce4-power-manager.desktop"
 if ! pgrep -u "$(id -u)" -f '^(/usr/bin/)?xfce4-power-manager([[:space:]]|$)' >/dev/null; then
  mkdir -p "$HOME/.cache"
  xfce4-power-manager > "$HOME/.cache/libra-power-manager.log" 2>&1 &

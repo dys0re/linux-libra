@@ -5,18 +5,24 @@ if [ -f /etc/libra/gpu-desktop ] && [ "$(cat /etc/libra/gpu-desktop)" = 1 ]; the
 else
  export LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe QT_QUICK_BACKEND=software
 fi
-xset s off
-xset -dpms
+wayland=0
+if [ "${XDG_SESSION_TYPE:-}" = wayland ]; then
+ wayland=1
+ wlr-randr --output DSI-1 --scale 2
+else
+ xset s off
+ xset -dpms
+fi
 # Apply defaults once. Subsequent sessions preserve the user's changes.
-marker="$HOME/.config/libra/desktop-initialized"
+marker="${XDG_CONFIG_HOME:-$HOME/.config}/libra/desktop-initialized"
 reload_panel=0
 if [ ! -e "$marker" ]; then
  setprop() {
   xfconf-query -c "$1" -p "$2" -n -t "$3" -s "$4"
  }
- setprop xsettings /Gdk/WindowScalingFactor int 2
+ setprop xsettings /Gdk/WindowScalingFactor int "$((2 - wayland))"
  setprop xsettings /Gdk/UnscaledDPI int 98304
- setprop xsettings /Xft/DPI int 196608
+ setprop xsettings /Xft/DPI int "$((196608 - wayland * 98304))"
  setprop xsettings /Gtk/FontName string 'Noto Sans CJK SC 11'
  setprop xsettings /Gtk/MonospaceFontName string 'DejaVu Sans Mono 11'
  setprop xsettings /Net/ThemeName string Adwaita
@@ -41,7 +47,11 @@ if [ ! -e "$marker" ]; then
  setprop xfce4-panel /panels/panel-1/position-locked bool true
  setprop xfce4-panel /panels/panel-1/length uint 100
  setprop xfce4-panel /panels/panel-1/autohide-behavior uint 0
- setprop xfce4-panel /panels/panel-1/position string 'p=10;x=540;y=1880'
+ if [ "$wayland" = 1 ]; then
+  setprop xfce4-panel /panels/panel-1/position string 'p=10;x=270;y=932'
+ else
+  setprop xfce4-panel /panels/panel-1/position string 'p=10;x=540;y=1880'
+ fi
  # Replace the default panel with launchers and a window list accessible by touch.
  xfconf-query -c xfce4-panel -p /panels -n -a -t int -s 1
  xfconf-query -c xfce4-panel -p /panels/panel-1/plugin-ids -n -a \
@@ -62,12 +72,18 @@ if [ ! -e "$marker" ]; then
 fi
 # Load the completed panel layout, including the battery plugin, in one restart.
 LIBRA_PANEL_RELOAD="$reload_panel" /usr/local/bin/libra-battery-setup
-gsettings set org.onboard.auto-show enabled false
-gsettings set org.onboard start-minimized true
-gsettings set org.onboard.window docking-enabled true
-gsettings set org.onboard.window docking-edge "'bottom'"
-gsettings set org.onboard.window docking-shrink-workarea true
-onboard > "$HOME/.cache/libra-onboard.log" 2>&1 &
+if [ "$wayland" = 1 ]; then
+ if ! pgrep -u "$(id -u)" -x wvkbd-mobintl >/dev/null; then
+  wvkbd-mobintl --hidden -H 260 > "$XDG_CACHE_HOME/keyboard.log" 2>&1 &
+ fi
+else
+ gsettings set org.onboard.auto-show enabled false
+ gsettings set org.onboard start-minimized true
+ gsettings set org.onboard.window docking-enabled true
+ gsettings set org.onboard.window docking-edge "'bottom'"
+ gsettings set org.onboard.window docking-shrink-workarea true
+ onboard > "$HOME/.cache/libra-onboard.log" 2>&1 &
+ /usr/local/bin/libra-maximize-windows &
+fi
 pgrep -x fcitx5 >/dev/null || fcitx5 -d
-/usr/local/bin/libra-maximize-windows &
 notify-send 'Libra 桌面' '下方按钮可开关屏幕键盘、切换和关闭窗口；窗口默认最大化。'

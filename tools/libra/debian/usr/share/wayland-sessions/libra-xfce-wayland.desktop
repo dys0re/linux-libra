@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=Xfce (Wayland, Libra test)
+Name[zh_CN]=Xfce（Wayland，Libra 测试）
+Comment=Experimental Xfce Wayland session using Labwc and Adreno 418
+Exec=/usr/local/bin/libra-xfce-wayland-session
+TryExec=labwc
+Type=Application
+DesktopNames=XFCE

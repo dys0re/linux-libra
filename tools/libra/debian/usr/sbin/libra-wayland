@@ -1,0 +1,17 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+set -eu
+case "${1:-status}" in
+ start)
+  [ "$(id -u)" = 0 ] || { echo 'Run sudo libra-wayland start' >&2; exit 1; }
+  /usr/sbin/libra-desktop-ready
+  systemctl start libra-wayland.service
+  ;;
+ stop)
+  [ "$(id -u)" = 0 ] || { echo 'Run sudo libra-wayland stop' >&2; exit 1; }
+  systemctl stop libra-wayland.service
+  systemctl start lightdm.service
+  ;;
+ status) exec systemctl status libra-wayland.service --no-pager ;;
+ *) echo 'Usage: libra-wayland start|stop|status' >&2; exit 2 ;;
+esac

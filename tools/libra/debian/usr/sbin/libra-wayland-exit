@@ -1,0 +1,20 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+# PAM moves the desktop out of the service cgroup. Close its logind scope too.
+set -eu
+main_pid=${1:-0}
+[ "$main_pid" -gt 1 ] || exit 0
+session=
+for candidate in $(loginctl list-sessions --no-legend --no-pager | awk '{print $1}'); do
+ leader=$(loginctl show-session "$candidate" -p Leader --value)
+ if [ "$leader" = "$main_pid" ]; then session=$candidate; break; fi
+done
+child=$(pgrep -P "$main_pid" -x labwc || true)
+if [ -n "$child" ]; then
+ kill -TERM "$child" 2>/dev/null || true
+ for attempt in 1 2 3 4 5 6 7 8 9 10; do
+  kill -0 "$child" 2>/dev/null || break
+  sleep 0.2
+ done
+fi
+if [ -n "$session" ]; then loginctl terminate-session "$session"; fi
