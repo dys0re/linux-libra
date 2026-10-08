@@ -1,0 +1,67 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+# First-load test; never unload a running display driver.
+set -eu
+[ "$(id -u)" = 0 ] || { echo 'Run with sudo.' >&2; exit 1; }
+grep -qw 'libra.gpu_defer=1' /proc/cmdline || {
+ echo 'Use the GPU-deferred boot first.' >&2; exit 1;
+}
+[ ! -d /sys/module/msm ] || {
+ echo 'MSM is already loaded. Restart the deferred boot; do not unload it.' >&2; exit 1;
+}
+[ "$(cat /proc/sys/kernel/tainted)" = 0 ] || {
+ echo 'Kernel already reported a fault; restart before testing.' >&2; exit 1;
+}
+[ -e /sys/module/qcom_iommu/parameters/msm8992_probe ]
+test -s /usr/lib/firmware/qcom/a420_pm4.fw
+test -s /usr/lib/firmware/qcom/a420_pfp.fw
+mark() {
+ printf 'GPU stage: %s\n' "$1"
+ [ ! -c /dev/pmsg0 ] || printf 'libra GPU: %s\n' "$1" > /dev/pmsg0
+}
+restore_display() {
+ status=$?
+ if [ "$(cat /proc/sys/kernel/tainted)" != 0 ]; then
+  echo 'Kernel fault recorded; preserving state without further hardware actions.' >&2
+  exit "$status"
+ fi
+ if [ "$status" -eq 0 ]; then
+  systemctl start lightdm || true
+ elif [ ! -d /sys/module/msm ]; then
+  echo 'GPU prerequisite failed before MSM; starting the software console.' >&2
+  for stage in bias backlight panel release console; do
+   LIBRA_GPU=0 /usr/sbin/libra-drm-load "$stage" || exit "$status"
+  done
+  /usr/sbin/libra-drm-test console || true
+  systemctl start lightdm || true
+ else
+  echo 'GPU test failed after MSM registration; preserving logs, no unload/retry.' >&2
+ fi
+ exit "$status"
+}
+trap restore_display EXIT
+printf 'Preparing GPU before the first native DRM registration.\n'
+mark ocmem
+modprobe ocmem
+echo Y > /sys/module/ocmem/parameters/msm8992_probe
+echo fdd00000.sram > /sys/bus/platform/drivers_probe
+test -L /sys/bus/platform/devices/fdd00000.sram/driver
+mark iommu
+echo Y > /sys/module/qcom_iommu/parameters/msm8992_probe
+echo fdb10000.iommu > /sys/bus/platform/drivers_probe
+test -L /sys/bus/platform/devices/fdb10000.iommu/driver
+for stage in bias backlight panel release console; do
+ mark "$stage"
+ LIBRA_GPU=1 /usr/sbin/libra-drm-load "$stage"
+done
+mark scanout
+/usr/sbin/libra-drm-test console
+mark gpu-firmware-and-ring
+/usr/sbin/libra-gpu-probe
+mark shader-readback
+env -u LIBGL_ALWAYS_SOFTWARE -u GALLIUM_DRIVER \
+ LD_LIBRARY_PATH=/usr/lib/libra-gpu/dri \
+ __EGL_VENDOR_LIBRARY_FILENAMES=/usr/lib/libra-gpu/egl-vendor.json \
+ LIBGL_DRIVERS_PATH=/usr/lib/libra-gpu/dri /usr/sbin/libra-gpu-render
+echo 'GPU shader/readback passed; desktop software rendering is retained for comparison.'
+mark completed

@@ -111,16 +111,18 @@ if [ "$stage" = release ]; then
 		result=1
 	fi
 elif [ "$module" = msm ]; then
+	gpu=${LIBRA_GPU:-0}
+	case "$gpu" in 0|1) ;; *) printf 'LIBRA_GPU must be 0 or 1.\n' >&2; exit 2;; esac
 	fbdev=0
 	[ "$stage" != console ] || fbdev=1
 	printf 'Registering native MSM/DSI/PHY drivers (fbdev=%s)...\n' "$fbdev"
 	# Keep capture active briefly after modprobe for deferred probe workers.
 	if /usr/sbin/libra-kmsg "$output/$stage-live.txt" /bin/sh -c '
-		/sbin/modprobe msm "fbdev=$1" mdp5_core_clk_rate=200000000
+		/sbin/modprobe msm "fbdev=$1" "gpu=$2" mdp5_core_clk_rate=200000000
 		result=$?
 		sleep 1
 		exit "$result"
-	' sh "$fbdev"; then result=0; else result=$?; fi
+	' sh "$fbdev" "$gpu"; then result=0; else result=$?; fi
 else
 	printf 'Loading %s...\n' "$module"
 	set -- "$module"

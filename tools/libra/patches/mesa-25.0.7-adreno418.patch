@@ -1,0 +1,6 @@
+--- a/src/freedreno/common/freedreno_devices.py
++++ b/src/freedreno/common/freedreno_devices.py
+@@ -232,2 +232,3 @@
+         GPUId(405),
++        GPUId(418),
+         GPUId(420),

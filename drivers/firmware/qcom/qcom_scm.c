@@ -1193,6 +1193,7 @@ int qcom_scm_ocmem_lock(enum qcom_scm_ocmem_client id, u32 offset, u32 size,
 		.args[2] = size,
 		.args[3] = mode,
 		.arginfo = QCOM_SCM_ARGS(4),
+		.owner = ARM_SMCCC_OWNER_SIP,
 	};
 
 	return qcom_scm_call(__scm->dev, &desc, NULL);
@@ -1216,6 +1217,7 @@ int qcom_scm_ocmem_unlock(enum qcom_scm_ocmem_client id, u32 offset, u32 size)
 		.args[1] = offset,
 		.args[2] = size,
 		.arginfo = QCOM_SCM_ARGS(3),
+		.owner = ARM_SMCCC_OWNER_SIP,
 	};
 
 	return qcom_scm_call(__scm->dev, &desc, NULL);

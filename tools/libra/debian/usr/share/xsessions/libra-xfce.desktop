@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=Xfce
+Comment=Xfce desktop on Libra
+Exec=/usr/local/bin/libra-xfce-session
+TryExec=/usr/bin/startxfce4
+Type=Application
+DesktopNames=XFCE

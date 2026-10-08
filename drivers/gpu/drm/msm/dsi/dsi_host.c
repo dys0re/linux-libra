@@ -143,6 +143,7 @@ struct msm_dsi_host {
 
 	/* DSI 6G TX buffer*/
 	struct drm_gem_object *tx_gem_obj;
+	u64 tx_iova;
 	struct msm_gem_address_space *aspace;
 
 	/* DSI v2 TX buffer */
@@ -212,17 +213,17 @@ static const struct msm_dsi_cfg_handler *dsi_get_config_8992(
 
 	for (i = 0; i < bootstrap->num_bus_clks; i++)
 		clocks[i].id = bootstrap->bus_clk_names[i];
-	ret = devm_clk_bulk_get(dev, bootstrap->num_bus_clks, clocks);
+	ret = clk_bulk_get(dev, bootstrap->num_bus_clks, clocks);
 	if (ret)
 		return ERR_PTR(ret);
 	ret = devm_regulator_bulk_get_const(dev, bootstrap->num_regulators,
 			bootstrap->regulator_data, &msm_host->supplies);
 	if (ret)
-		return ERR_PTR(ret);
+		goto clocks_put;
 
 	ret = pm_runtime_resume_and_get(dev);
 	if (ret)
-		return ERR_PTR(ret);
+		goto clocks_put;
 	ret = regulator_bulk_enable(bootstrap->num_regulators, msm_host->supplies);
 	if (ret)
 		goto runtime_put;
@@ -251,6 +252,8 @@ supplies_off:
 	regulator_bulk_disable(bootstrap->num_regulators, msm_host->supplies);
 runtime_put:
 	pm_runtime_put_sync(dev);
+clocks_put:
+	clk_bulk_put(bootstrap->num_bus_clks, clocks);
 	return ret ? ERR_PTR(ret) : cfg_hnd;
 }
 
@@ -1288,11 +1291,15 @@ int dsi_tx_buf_alloc_6g(struct msm_dsi_host *msm_host, int size)
 	struct drm_device *dev = msm_host->dev;
 	struct msm_drm_private *priv = dev->dev_private;
 	uint64_t iova;
+	u32 flags = MSM_BO_WC;
 	u8 *data;
 
 	msm_host->aspace = msm_gem_address_space_get(priv->kms->aspace);
+	/* The DSI command DMA also needs contiguous memory without a display MMU. */
+	if (!msm_host->aspace)
+		flags |= MSM_BO_STOLEN;
 
-	data = msm_gem_kernel_new(dev, size, MSM_BO_WC,
+	data = msm_gem_kernel_new(dev, size, flags,
 					msm_host->aspace,
 					&msm_host->tx_gem_obj, &iova);
 
@@ -1302,6 +1309,7 @@ int dsi_tx_buf_alloc_6g(struct msm_dsi_host *msm_host, int size)
 	}
 
 	msm_gem_object_set_name(msm_host->tx_gem_obj, "tx_gem");
+	msm_host->tx_iova = iova;
 
 	msm_host->tx_size = msm_host->tx_gem_obj->size;
 
@@ -1462,14 +1470,12 @@ static int dsi_long_read_resp(u8 *buf, const struct mipi_dsi_msg *msg)
 
 int dsi_dma_base_get_6g(struct msm_dsi_host *msm_host, uint64_t *dma_base)
 {
-	struct drm_device *dev = msm_host->dev;
-	struct msm_drm_private *priv = dev->dev_private;
-
-	if (!dma_base)
+	if (!dma_base || !msm_host->tx_gem_obj)
 		return -EINVAL;
 
-	return msm_gem_get_and_pin_iova(msm_host->tx_gem_obj,
-				priv->kms->aspace, dma_base);
+	/* The allocation owns one pin until msm_dsi_tx_buf_free(). */
+	*dma_base = msm_host->tx_iova;
+	return 0;
 }
 
 int dsi_dma_base_get_v2(struct msm_dsi_host *msm_host, uint64_t *dma_base)

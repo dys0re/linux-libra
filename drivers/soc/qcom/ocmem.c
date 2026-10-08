@@ -30,6 +30,10 @@ enum region_mode {
 	MODE_DEFAULT = WIDE_MODE,
 };
 
+static bool msm8992_probe;
+module_param(msm8992_probe, bool, 0600);
+MODULE_PARM_DESC(msm8992_probe, "Allow manual MSM8992 OCMEM activation");
+
 enum ocmem_macro_state {
 	PASSTHROUGH = 0,
 	PERI_ON = 1,
@@ -92,7 +96,7 @@ struct ocmem {
 #define OCMEM_REG_GEN_STATUS			0x0000000c
 
 #define OCMEM_REG_PSGSC_STATUS			0x00000038
-#define OCMEM_REG_PSGSC_CTL(i0)			(0x0000003c + 0x1*(i0))
+#define OCMEM_REG_PSGSC_CTL(i0)			(0x0000003c + 0x4*(i0))
 
 #define OCMEM_PSGSC_CTL_MACRO0_MODE(val)	FIELD_PREP(0x00000007, (val))
 #define OCMEM_PSGSC_CTL_MACRO1_MODE(val)	FIELD_PREP(0x00000070, (val))
@@ -242,6 +246,7 @@ struct ocmem_buf *ocmem_allocate(struct ocmem *ocmem, enum ocmem_client client,
 					  buf->offset, buf->len, WIDE_MODE);
 		if (ret) {
 			dev_err(ocmem->dev, "could not lock: %d\n", ret);
+			update_range(ocmem, buf, CLK_OFF, MODE_DEFAULT);
 			ret = -EINVAL;
 			goto err_unlock;
 		}
@@ -296,6 +301,12 @@ static int ocmem_dev_probe(struct platform_device *pdev)
 	unsigned long reg, region_size;
 	int i, j, ret, num_banks;
 	struct ocmem *ocmem;
+
+	if (of_device_is_compatible(dev->of_node, "qcom,msm8992-ocmem") &&
+	    !msm8992_probe) {
+		dev_info(dev, "MSM8992 OCMEM held for manual activation\n");
+		return -ENODEV;
+	}
 
 	if (!qcom_scm_is_available())
 		return -EPROBE_DEFER;
@@ -428,7 +439,13 @@ static const struct ocmem_config ocmem_8974_config = {
 	.macro_size = SZ_128K,
 };
 
+static const struct ocmem_config ocmem_8992_config = {
+	.num_regions = 4,
+	.macro_size = SZ_128K,
+};
+
 static const struct of_device_id ocmem_of_match[] = {
+	{ .compatible = "qcom,msm8992-ocmem", .data = &ocmem_8992_config },
 	{ .compatible = "qcom,msm8226-ocmem", .data = &ocmem_8226_config },
 	{ .compatible = "qcom,msm8974-ocmem", .data = &ocmem_8974_config },
 	{ }

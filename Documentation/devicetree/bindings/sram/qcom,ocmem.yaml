@@ -18,6 +18,7 @@ properties:
     enum:
       - qcom,msm8226-ocmem  # v1.1.0
       - qcom,msm8974-ocmem  # v1.4.0
+      - qcom,msm8992-ocmem  # four regions, 1 MiB total
 
   reg:
     items:
@@ -69,6 +70,7 @@ allOf:
           contains:
             enum:
               - qcom,msm8974-ocmem
+              - qcom,msm8992-ocmem
     then:
       properties:
         clocks:

@@ -21,7 +21,7 @@ apt-get install -y \
  openssh-server sudo curl wget ca-certificates locales tzdata less nano \
  f2fs-tools util-linux busybox-static libdrm-tests \
  xserver-xorg-core xserver-xorg-input-libinput xinit xauth x11-xserver-utils \
- x11-utils x11-apps xvfb mesa-utils libgl1-mesa-dri libegl-mesa0 \
+ x11-utils x11-apps xvfb mesa-utils libgl1-mesa-dri libegl-mesa0 wayland-utils xwayland \
  lightdm lightdm-gtk-greeter xfce4-session xfce4-panel xfce4-settings \
  xfwm4 xfdesktop4 thunar xfce4-terminal xfce4-appfinder mousepad ristretto \
  xfce4-notifyd xfce4-taskmanager adwaita-icon-theme fonts-dejavu-core \
@@ -30,7 +30,7 @@ apt-get install -y \
  fcitx5-config-qt im-config firefox-esr \
  pipewire pipewire-pulse wireplumber libspa-0.2-bluetooth \
  bluez blueman rfkill iw wireless-regdb wpasupplicant pciutils \
- upower xfce4-power-manager xfce4-power-manager-plugins
+ upower xfce4-power-manager xfce4-power-manager-plugins btop fastfetch
 # Keep signature verification; this kernel trusts the upstream regdb keys.
 update-alternatives --set regulatory.db /lib/firmware/regulatory.db-upstream
 printf 'en_US.UTF-8 UTF-8\nzh_CN.UTF-8 UTF-8\n' > /etc/locale.gen
@@ -67,8 +67,8 @@ Section "Device"
     Identifier "Libra MSM scanout"
     Driver "modesetting"
     Option "kmsdev" "/dev/dri/card0"
-    Option "AccelMethod" "none"
-    Option "ShadowFB" "true"
+    Option "AccelMethod" "glamor"
+    Option "ShadowFB" "false"
     Option "PageFlip" "false"
 EndSection
 Section "ServerFlags"

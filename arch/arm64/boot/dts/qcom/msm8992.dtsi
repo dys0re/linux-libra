@@ -22,6 +22,56 @@
 /delete-node/ &cpu7_map;
 
 &soc {
+	gpu: gpu@fdb00000 {
+		compatible = "qcom,adreno-418.0", "qcom,adreno";
+		reg = <0xfdb00000 0x40000>;
+		reg-names = "kgsl_3d0_reg_memory";
+		interrupts = <GIC_SPI 33 IRQ_TYPE_LEVEL_HIGH>;
+		interrupt-names = "kgsl_3d0_irq";
+		clocks = <&mmcc OXILI_GFX3D_CLK>,
+			 <&mmcc OXILICX_AHB_CLK>, <&mmcc OXILI_RBBMTIMER_CLK>;
+		clock-names = "core", "iface", "rbbmtimer";
+		power-domains = <&rpmpd MSM8994_VDDGFX>, <&mmcc OXILI_GX_GDSC>;
+		power-domain-names = "gfx", "gx";
+		/* OEM VDD_GFX initial corner 2; no raw voltage override. */
+		required-opps = <&rpmpd_opp_svs_krait>;
+		sram = <&gmu_sram>;
+		iommus = <&gpu_iommu 0>;
+		operating-points-v2 = <&gpu_opp_table>;
+		status = "disabled";
+
+		gpu_opp_table: opp-table {
+			compatible = "operating-points-v2";
+			/* Initial bring-up subset of the factory plan. */
+			opp-180000000 { opp-hz = /bits/ 64 <180000000>; };
+			opp-300000000 { opp-hz = /bits/ 64 <300000000>; };
+		};
+	};
+
+	gpu_iommu: iommu@fdb10000 {
+		compatible = "qcom,msm8992-iommu", "qcom,msm-iommu-v1";
+		reg = <0xfdb10000 0x3000>;
+		clocks = <&mmcc OXILICX_AHB_CLK>, <&mmcc OXILI_GFX3D_CLK>;
+		clock-names = "iface", "bus";
+		power-domains = <&rpmpd MSM8994_VDDGFX>, <&mmcc OXILI_GX_GDSC>;
+		power-domain-names = "gfx", "gx";
+		required-opps = <&rpmpd_opp_svs_krait>;
+		qcom,iommu-secure-id = <18>;
+		#address-cells = <1>;
+		#size-cells = <1>;
+		#iommu-cells = <1>;
+		ranges = <0 0xfdb10000 0x10000>;
+		status = "disabled";
+
+		/* OEM context 0 serves stream IDs 0 and 1. */
+		iommu-ctx@8000 {
+			compatible = "qcom,msm-iommu-v1-ns";
+			reg = <0x8000 0x1000>;
+			qcom,ctx-asid = <0>;
+			interrupts = <GIC_SPI 241 IRQ_TYPE_LEVEL_HIGH>;
+		};
+	};
+
 	mdss: display-subsystem@fd900000 {
 		compatible = "qcom,mdss";
 		reg = <0xfd900000 0x1000>, <0xfd9b0000 0x1000>;
@@ -255,7 +305,9 @@
 };
 
 &ocmem {
+	compatible = "qcom,msm8992-ocmem";
 	reg = <0xfdd00000 0x2000>, <0xfec00000 0x100000>;
+	ranges = <0 0xfec00000 0x100000>;
 
 	gmu-sram@0 {
 		reg = <0x0 0x80000>;

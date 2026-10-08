@@ -1,0 +1,13 @@
+#!/bin/sh
+# Prepare GPU providers before the first native DRM registration.
+set -eu
+[ "$(id -u)" = 0 ]
+[ ! -d /sys/module/msm ] || { echo 'MSM is already loaded; do not rebind it.' >&2; exit 1; }
+[ "$(cat /proc/sys/kernel/tainted)" = 0 ]
+modprobe ocmem
+echo Y > /sys/module/ocmem/parameters/msm8992_probe
+echo fdd00000.sram > /sys/bus/platform/drivers_probe
+test -L /sys/bus/platform/devices/fdd00000.sram/driver
+echo Y > /sys/module/qcom_iommu/parameters/msm8992_probe
+echo fdb10000.iommu > /sys/bus/platform/drivers_probe
+test -L /sys/bus/platform/devices/fdb10000.iommu/driver

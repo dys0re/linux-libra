@@ -21,8 +21,9 @@ struct device {void *of_node;};struct platform_device {struct device dev;};
 struct clk_bulk_data {const char *id;};struct msm_dsi_config {int num_bus_clks,num_regulators;const char **bus_clk_names;void *regulator_data;};
 struct msm_dsi_cfg_handler {const struct msm_dsi_config *cfg;};
 struct msm_dsi_host {struct platform_device*pdev;void *supplies;char *ctrl_base;unsigned int bootstrap_num_supplies;bool bootstrap_supplies_on;};
-static int failure,regrefs,pmrefs,clkrefs,reads,disables;static void(*action)(void*);static void *action_data;static const struct msm_dsi_config *expected;
-static int devm_clk_bulk_get(struct device*d,int n,struct clk_bulk_data*c){(void)d;(void)c;assert(n==3);return failure==1?-EIO:0;}
+static int failure,regrefs,pmrefs,clkrefs,reads,disables,handles;static void(*action)(void*);static void *action_data;static const struct msm_dsi_config *expected;
+static int clk_bulk_get(struct device*d,int n,struct clk_bulk_data*c){(void)d;(void)c;assert(n==3);if(failure==1)return -EIO;handles++;return 0;}
+static void clk_bulk_put(int n,struct clk_bulk_data*c){(void)c;assert(n==3&&handles==1&&!clkrefs);handles--;}
 static int devm_regulator_bulk_get_const(struct device*d,int n,void*v,void**s){(void)d;(void)v;assert(n==4);*s=(void*)1;return failure==2?-EIO:0;}
 static int pm_runtime_resume_and_get(struct device*d){(void)d;if(failure==3)return -EIO;pmrefs++;return 0;}
 static int regulator_bulk_enable(int n,void*s){assert(n==4&&s&&(pmrefs==1));if(failure==4)return -EIO;regrefs++;return 0;}
@@ -42,7 +43,7 @@ int main(void){
  const char *names[]={"a","b","c"};struct msm_dsi_config cfg={.num_bus_clks=3,.num_regulators=4,.bus_clk_names=names};struct platform_device p={0};char mem[0x200];expected=&cfg;
  for(failure=0;failure<=7;failure++){
   struct msm_dsi_host h={.pdev=&p,.ctrl_base=mem};regrefs=pmrefs=clkrefs=reads=disables=0;action=NULL;action_data=NULL;
-  const struct msm_dsi_cfg_handler *result=dsi_get_config_8992(&h,&cfg);
+  const struct msm_dsi_cfg_handler *result=dsi_get_config_8992(&h,&cfg); assert(!handles);
   if(!failure){assert(result&&result->cfg==&cfg&&regrefs==1&&!pmrefs&&!clkrefs&&reads==1&&h.bootstrap_supplies_on&&!disables&&action);action(action_data);assert(!regrefs&&!h.bootstrap_supplies_on&&disables==1);action(action_data);assert(disables==1);}
   else{assert((intptr_t)result<0&&!regrefs&&!pmrefs&&!clkrefs&&!h.bootstrap_supplies_on);assert(disables==(failure>=5));}
  }

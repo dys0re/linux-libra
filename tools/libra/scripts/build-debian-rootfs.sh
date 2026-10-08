@@ -58,6 +58,61 @@ done
 sudo -n install -m 755 "$build/libra-kmsg" "$root/usr/sbin/libra-kmsg"
 python3 "$workspace/scripts/extract-libra-radio-firmware.py"
 sudo -n cp -r --no-preserve=ownership "$build/libra-radio-firmware/." "$root/usr/lib/firmware/"
+python3 "$workspace/scripts/extract-libra-gpu-firmware.py"
+sudo -n cp -r --no-preserve=ownership "$build/libra-gpu-firmware/qcom" "$root/usr/lib/firmware/"
+"${CROSS_COMPILE:-aarch64-linux-gnu-}gcc" -Os -Wall -Wextra -Werror \
+	-fno-stack-protector -fno-asynchronous-unwind-tables -fno-unwind-tables \
+	-nostdlib -static -I "$workspace/linux/tools/include/nolibc" \
+	-isystem "$build/libra/usr/include" -include nolibc.h \
+	"$workspace/linux/tools/libra/tests/gpu-probe.c" -o "$build/libra-gpu-probe"
+sudo -n install -m 755 "$build/libra-gpu-probe" "$root/usr/sbin/libra-gpu-probe"
+sudo -n chroot "$root" dpkg-query -W -f='${binary:Package}\n' > "$build/libra-mesa-packages-before.txt"
+sudo -n env DEBIAN_FRONTEND=noninteractive chroot "$root" apt-get install -y \
+	libc6-dev libdrm-dev libexpat1-dev libzstd-dev zlib1g-dev libelf-dev \
+	libegl-dev libgles-dev libglvnd-dev libstdc++-14-dev \
+	libx11-xcb-dev libxext-dev libxrandr-dev libxfixes-dev libxxf86vm-dev \
+	libxcb-glx0-dev libxcb-dri2-0-dev libxcb-dri3-dev \
+	libxcb-present-dev libxcb-randr0-dev libxcb-xfixes0-dev libxcb-shm0-dev \
+	libxcb-sync-dev libxshmfence-dev libwayland-dev libwayland-egl-backend-dev wayland-protocols
+python3 "$workspace/scripts/build-libra-mesa.py" --root "$root"
+sudo -n mkdir -p "$root/usr/lib/libra-gpu/dri"
+mesa_abi=$(sudo -n chroot "$root" dpkg-query -W -f='${Version}' libegl-mesa0)
+sudo -n install -m 755 "$build/libra-mesa/src/gallium/targets/dri/libgallium-$mesa_abi.so" \
+	"$root/usr/lib/libra-gpu/dri/libgallium-25.0.7-libra-a418.so"
+sudo -n install -m 755 "$build/libra-mesa/src/egl/libEGL_mesa.so.0.0.0" \
+	"$root/usr/lib/libra-gpu/dri/libEGL_mesa.so.0"
+sudo -n install -m 755 "$build/libra-mesa/src/glx/libGLX_mesa.so.0.0.0" \
+	"$root/usr/lib/libra-gpu/dri/libGLX_mesa.so.0"
+sudo -n install -m 755 "$build/libra-mesa/src/gbm/libgbm.so.1.0.0" \
+	"$root/usr/lib/libra-gpu/dri/libgbm.so.1"
+sudo -n install -m 755 "$build/libra-mesa/src/gbm/backends/dri/dri_gbm.so" \
+	"$root/usr/lib/libra-gpu/dri/dri_gbm.so"
+for driver in msm swrast; do
+	sudo -n ln -sfn libgallium-25.0.7-libra-a418.so "$root/usr/lib/libra-gpu/dri/${driver}_dri.so"
+done
+sudo -n ln -sfn libgallium-25.0.7-libra-a418.so \
+	"$root/usr/lib/libra-gpu/dri/libgallium-$mesa_abi.so"
+# Cross compiler supplies instructions; Debian supplies headers and runtime.
+"${CROSS_COMPILE:-aarch64-linux-gnu-}gcc" --sysroot="$root" \
+	-B"$root/usr/lib/aarch64-linux-gnu/" -B"$root/usr/lib/gcc/aarch64-linux-gnu/14/" \
+	-isystem "$root/usr/include/aarch64-linux-gnu" -L"$build/libra-mesa-link-compat" \
+	-L"$root/usr/lib/aarch64-linux-gnu" -L"$root/usr/lib/gcc/aarch64-linux-gnu/14" \
+	-Wl,-rpath-link,"$root/usr/lib/aarch64-linux-gnu" -O2 -Wall -Wextra -Werror \
+	"$workspace/linux/tools/libra/tests/gpu-render.c" -lEGL -lGLESv2 -o "$build/libra-gpu-render"
+sudo -n install -m 755 "$build/libra-gpu-render" "$root/usr/sbin/libra-gpu-render"
+python3 - "$root" "$build/libra-mesa-packages-before.txt" <<'PY'
+from pathlib import Path
+import subprocess, sys
+root, before = sys.argv[1:]
+old = set(Path(before).read_text().splitlines())
+current = subprocess.check_output(['sudo', '-n', 'chroot', root, 'dpkg-query', '-W',
+    '-f=${db:Status-Status}\t${binary:Package}\n'], text=True)
+remove = [line.split('\t')[1] for line in current.splitlines()
+          if line.startswith('installed\t') and line.split('\t')[1] not in old
+          and line.split('\t')[1].split(':')[0].endswith('-dev')]
+if remove:
+    subprocess.run(['sudo', '-n', 'chroot', root, 'apt-get', 'purge', '-y', *remove], check=True)
+PY
 # Overlay files originate in a user checkout; never transfer that ownership.
 sudo -n cp -r --no-preserve=ownership "$workspace/linux/tools/libra/debian/." "$root/"
 sudo -n chmod 755 "$root/usr/sbin/libra-finalize-rootfs"

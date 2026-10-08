@@ -2,6 +2,7 @@
 /* Copyright (c) 2014 The Linux Foundation. All rights reserved.
  */
 #include "a4xx_gpu.h"
+#include <linux/iopoll.h>
 
 #define A4XX_INT0_MASK \
 	(A4XX_INT0_RBBM_AHB_ERROR |        \
@@ -198,7 +199,7 @@ static int a4xx_hw_init(struct msm_gpu *gpu)
 		gpu_write(gpu, REG_A4XX_VBIF_IN_WR_LIM_CONF0, 0x18181818);
 		gpu_write(gpu, REG_A4XX_VBIF_IN_WR_LIM_CONF1, 0x00000018);
 		gpu_write(gpu, REG_A4XX_VBIF_ROUND_ROBIN_QOS_ARB, 0x00000003);
-	} else if (adreno_is_a430(adreno_gpu)) {
+	} else if (adreno_is_a430(adreno_gpu) || adreno_is_a418(adreno_gpu)) {
 		gpu_write(gpu, REG_A4XX_VBIF_GATE_OFF_WRREQ_EN, 0x00000001);
 		gpu_write(gpu, REG_A4XX_VBIF_IN_RD_LIM_CONF0, 0x18181818);
 		gpu_write(gpu, REG_A4XX_VBIF_IN_RD_LIM_CONF1, 0x00000018);
@@ -247,7 +248,7 @@ static int a4xx_hw_init(struct msm_gpu *gpu)
 	 */
 	gpu_write(gpu, REG_A4XX_CP_PERFCTR_CP_SEL_0, CP_ALWAYS_COUNT);
 
-	if (adreno_is_a430(adreno_gpu))
+	if (adreno_is_a430(adreno_gpu) || adreno_is_a418(adreno_gpu))
 		gpu_write(gpu, REG_A4XX_UCHE_CACHE_WAYS_VFD, 0x07);
 
 	/* Disable L2 bypass to avoid UCHE out of bounds errors */
@@ -255,7 +256,8 @@ static int a4xx_hw_init(struct msm_gpu *gpu)
 	gpu_write(gpu, REG_A4XX_UCHE_TRAP_BASE_HI, 0xffff0000);
 
 	gpu_write(gpu, REG_A4XX_CP_DEBUG, (1 << 25) |
-			(adreno_is_a420(adreno_gpu) ? (1 << 29) : 0));
+			(adreno_is_a420(adreno_gpu) ? (1 << 29) : 0) |
+			(adreno_is_a418(adreno_gpu) ? (1 << 14) : 0));
 
 	/* On A430 enable SP regfile sleep for power savings */
 	/* TODO downstream does this for !420, so maybe applies for 405 too? */
@@ -307,6 +309,12 @@ static int a4xx_hw_init(struct msm_gpu *gpu)
 
 	/* SMMU registers */
 	gpu_write(gpu, REG_A4XX_CP_PROTECT(11), 0x6e010000);
+	if (adreno_is_a418(adreno_gpu)) {
+		/* OEM XPU protected ranges: 0x2c00/10, 0x3300/8, 0x3400/10. */
+		gpu_write(gpu, REG_A4XX_CP_PROTECT(12), 0x6a00b000);
+		gpu_write(gpu, REG_A4XX_CP_PROTECT(13), 0x6800cc00);
+		gpu_write(gpu, REG_A4XX_CP_PROTECT(14), 0x6a00d000);
+	}
 
 	gpu_write(gpu, REG_A4XX_RBBM_INT_0_MASK, A4XX_INT0_MASK);
 
@@ -577,14 +585,19 @@ static int a4xx_pm_resume(struct msm_gpu *gpu) {
 	if (ret)
 		return ret;
 
-	if (adreno_is_a430(adreno_gpu)) {
+	if (adreno_is_a430(adreno_gpu) || adreno_is_a418(adreno_gpu)) {
 		unsigned int reg;
 		/* Set the default register values; set SW_COLLAPSE to 0 */
 		gpu_write(gpu, REG_A4XX_RBBM_POWER_CNTL_IP, 0x778000);
-		do {
-			udelay(5);
-			reg = gpu_read(gpu, REG_A4XX_RBBM_POWER_STATUS);
-		} while (!(reg & A4XX_RBBM_POWER_CNTL_IP_SP_TP_PWR_ON));
+		ret = readl_poll_timeout(gpu->mmio +
+					REG_A4XX_RBBM_POWER_STATUS * 4, reg,
+			reg & A4XX_RBBM_POWER_CNTL_IP_SP_TP_PWR_ON, 5, 10000);
+		if (ret) {
+			DRM_DEV_ERROR(&gpu->pdev->dev,
+				      "SP/TP power-up timed out: %#x\n", reg);
+			msm_gpu_pm_suspend(gpu);
+			return ret;
+		}
 	}
 	return 0;
 }
@@ -593,15 +606,12 @@ static int a4xx_pm_suspend(struct msm_gpu *gpu) {
 	struct adreno_gpu *adreno_gpu = to_adreno_gpu(gpu);
 	int ret;
 
-	ret = msm_gpu_pm_suspend(gpu);
-	if (ret)
-		return ret;
-
-	if (adreno_is_a430(adreno_gpu)) {
+	if (adreno_is_a430(adreno_gpu) || adreno_is_a418(adreno_gpu)) {
 		/* Set the default register values; set SW_COLLAPSE to 1 */
 		gpu_write(gpu, REG_A4XX_RBBM_POWER_CNTL_IP, 0x778001);
 	}
-	return 0;
+	ret = msm_gpu_pm_suspend(gpu);
+	return ret;
 }
 
 static int a4xx_get_timestamp(struct msm_gpu *gpu, uint64_t *value)
@@ -688,7 +698,7 @@ struct msm_gpu *a4xx_gpu_init(struct drm_device *dev)
 							     a4xx_registers;
 
 	/* if needed, allocate gmem: */
-	ret = adreno_gpu_ocmem_init(dev->dev, adreno_gpu,
+	ret = adreno_gpu_ocmem_init(&pdev->dev, adreno_gpu,
 				    &a4xx_gpu->ocmem);
 	if (ret)
 		goto fail;

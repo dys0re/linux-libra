@@ -8,11 +8,11 @@ chmod 755 /usr/sbin/libra-usb-gadget /usr/local/bin/libra-memory-check \
  /usr/sbin/libra-finalize-rootfs /usr/sbin/libra-radio-status /usr/sbin/libra-radio-start /usr/sbin/libra-bluetooth-address /usr/local/bin/libra-desktop-setup \
  /usr/local/bin/libra-keyboard /usr/local/bin/libra-maximize-windows \
  /usr/local/bin/libra-desktop-action /usr/local/bin/libra-brightness \
- /usr/local/bin/libra-battery-setup /usr/sbin/libra-battery-status
+ /usr/local/bin/libra-battery-setup /usr/sbin/libra-battery-status /usr/sbin/libra-gpu-test /usr/sbin/libra-gpu-prepare /usr/sbin/libra-desktop-ready /usr/local/bin/libra-xfce-session
 systemctl enable libra-radio.service libra-usb.service libra-usb-dhcp.service libra-drm.service \
  libra-ssh-keys.service serial-getty@ttyGS0.service
 mkdir -p /etc/libra
-printf 'Debian trixie arm64; Xfce X11; software OpenGL; userdata F2FS\n' > /etc/libra/image-release
+printf 'Debian trixie arm64; Xfce X11; Adreno 418 OpenGL; Wayland EGL/GBM; userdata F2FS\n' > /etc/libra/image-release
 cat > /etc/resolv.conf <<'EOF'
 nameserver 223.5.5.5
 nameserver 1.1.1.1

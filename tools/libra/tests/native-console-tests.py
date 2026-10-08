@@ -67,7 +67,7 @@ echo "$1" >> "$FIXTURE/tests"
 [ "$CASE" != console_failure ]
 ''')
   p=d/'bootstrap.sh';p.parent.mkdir(parents=True, exist_ok=True);p.write_text(boot.replace('/sys/',str(d)+'/sys/').replace('/run/',str(d)+'/run/').replace('/proc/',str(d)+'/proc/').replace('/usr/sbin/',str(d)+'/usr/sbin/').replace('/dev/',str(d)+'/dev/'))
-  env=dict(os.environ,PATH=str(d/'bin')+':'+os.environ['PATH'],FIXTURE=str(d),CASE=case)
+  env=dict(os.environ,PATH=str(d/'bin')+':'+os.environ['PATH'],FIXTURE=str(d),CASE=case,LIBRA_GPU=('1' if case=='gpu_enabled' else 'invalid' if case=='invalid_gpu' else '0'))
   run=subprocess.run(['sh',str(p)],env=env,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True)
   assert run.returncode==(0 if case=='ready' else 1),(case,run.stdout)
   assert (bl/'brightness').read_text().strip()==('512' if case=='ready' else '0'),case
@@ -79,7 +79,7 @@ echo "$1" >> "$FIXTURE/tests"
 # Exercise the real stage helper's console parameter and fresh-fault checks.
 loader=(ROOT/'scripts/alpine-drm-load.sh').read_text()
 with tempfile.TemporaryDirectory(prefix='libra-native-loader-') as temp:
- for case in ('good','unbound','dsi_fault','clock_input_fault','loaded_without_fbdev','firmware_bound','video_done_fault','cmd_dma_fault','panel_shutdown_fault'):
+ for case in ('good','gpu_enabled','invalid_gpu','unbound','dsi_fault','clock_input_fault','loaded_without_fbdev','firmware_bound','video_done_fault','cmd_dma_fault','panel_shutdown_fault'):
   d=Path(temp)/case;d.mkdir();(d/'proc/sys/kernel').mkdir(parents=True);(d/'proc/cmdline').write_text('libra.drm_native=1\n');(d/'proc/sys/kernel/tainted').write_text('0\n');(d/'sbin').mkdir();(d/'usr/sbin').mkdir(parents=True);(d/'bin').mkdir()
   for module in ('qcom_labibb_regulator','qcom_wled','panel_sharp_libra_rsp61322'):(d/'sys/module'/module).mkdir(parents=True)
   bl=d/'sys/class/backlight/backlight';(bl/'device/driver').mkdir(parents=True);(bl/'brightness').write_text('512\n');(bl/'device/driver/module').symlink_to(d/'sys/module/qcom_wled')
@@ -110,10 +110,10 @@ cat "$log"
 exit "$result"
 ''')
   p=d/'load.sh';p.parent.mkdir(parents=True, exist_ok=True);p.write_text(loader.replace('/sys/',str(d)+'/sys/').replace('/proc/',str(d)+'/proc/').replace('/run/',str(d)+'/run/').replace('/usr/sbin/',str(d)+'/usr/sbin/').replace('/sbin/modprobe',str(d)+'/sbin/modprobe'))
-  env=dict(os.environ,PATH=str(d/'bin')+':'+os.environ['PATH'],FIXTURE=str(d),CASE=case)
+  env=dict(os.environ,PATH=str(d/'bin')+':'+os.environ['PATH'],FIXTURE=str(d),CASE=case,LIBRA_GPU=('1' if case=='gpu_enabled' else 'invalid' if case=='invalid_gpu' else '0'))
   result=subprocess.run(['sh',str(p),'console'],env=env,text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
-  assert result.returncode==(0 if case=='good' else 1),(case,result.stdout)
+  assert result.returncode==(0 if case in ('good','gpu_enabled') else 2 if case=='invalid_gpu' else 1),(case,result.stdout)
   assert (bl/'brightness').read_text().strip()=='0',case
-  if case in ('loaded_without_fbdev','firmware_bound'):assert not(d/'modprobe-args').exists(),case
-  else:assert (d/'modprobe-args').read_text().strip()=='msm fbdev=1 mdp5_core_clk_rate=200000000',case
+  if case in ('loaded_without_fbdev','firmware_bound','invalid_gpu'):assert not(d/'modprobe-args').exists(),case
+  else:assert (d/'modprobe-args').read_text().strip()==('msm fbdev=1 gpu='+('1' if case=='gpu_enabled' else '0')+' mdp5_core_clk_rate=200000000'),case
   print('PASS native console loader',case)

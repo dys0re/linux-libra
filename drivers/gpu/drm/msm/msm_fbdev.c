@@ -42,6 +42,7 @@ static void msm_fbdev_fb_destroy(struct fb_info *info)
 	struct drm_fb_helper *helper = (struct drm_fb_helper *)info->par;
 	struct drm_framebuffer *fb = helper->fb;
 	struct drm_gem_object *bo = msm_framebuffer_bo(fb, 0);
+	struct msm_drm_private *priv = helper->dev->dev_private;
 
 	DBG();
 
@@ -49,6 +50,7 @@ static void msm_fbdev_fb_destroy(struct fb_info *info)
 
 	/* this will free the backing object */
 	msm_gem_put_vaddr(bo);
+	msm_gem_unpin_iova(bo, priv->kms->aspace);
 	drm_framebuffer_remove(fb);
 
 	drm_client_release(&helper->client);
@@ -116,6 +118,7 @@ static int msm_fbdev_create(struct drm_fb_helper *helper,
 	fbi->screen_buffer = msm_gem_get_vaddr(bo);
 	if (IS_ERR(fbi->screen_buffer)) {
 		ret = PTR_ERR(fbi->screen_buffer);
+		msm_gem_unpin_iova(bo, priv->kms->aspace);
 		goto fail;
 	}
 	fbi->screen_size = bo->size;
@@ -130,6 +133,7 @@ static int msm_fbdev_create(struct drm_fb_helper *helper,
 	return 0;
 
 fail:
+	helper->fb = NULL;
 	drm_framebuffer_remove(fb);
 	return ret;
 }

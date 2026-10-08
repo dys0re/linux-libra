@@ -489,6 +489,10 @@ static struct msm_gem_vma *get_vma_locked(struct drm_gem_object *obj,
 	if (!vma) {
 		int ret;
 
+		/* Page-backed GPU textures cannot scan out without a display MMU. */
+		if (!aspace)
+			return ERR_PTR(-EINVAL);
+
 		vma = add_vma(obj, aspace);
 		if (IS_ERR(vma))
 			return vma;
@@ -1209,11 +1213,13 @@ struct drm_gem_object *msm_gem_new(struct drm_device *dev, uint32_t size, uint32
 	struct msm_gem_object *msm_obj;
 	struct drm_gem_object *obj = NULL;
 	bool use_vram = false;
+	bool gpu_mmu = priv->gpu_pdev &&
+		device_iommu_mapped(&priv->gpu_pdev->dev);
 	int ret;
 
 	size = PAGE_ALIGN(size);
 
-	if (!msm_use_mmu(dev))
+	if (!msm_use_mmu(dev) && !gpu_mmu)
 		use_vram = true;
 	else if ((flags & (MSM_BO_STOLEN | MSM_BO_SCANOUT)) && priv->vram.size)
 		use_vram = true;

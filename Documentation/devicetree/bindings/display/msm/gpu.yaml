@@ -100,6 +100,15 @@ properties:
     type: object
 
   power-domains:
+    minItems: 1
+    maxItems: 2
+
+  power-domain-names:
+    items:
+      - const: gfx
+      - const: gx
+
+  required-opps:
     maxItems: 1
 
   zap-shader:
@@ -142,6 +151,26 @@ required:
 additionalProperties: false
 
 allOf:
+  - if:
+      properties:
+        compatible:
+          contains:
+            const: qcom,adreno-418.0
+    then:
+      properties:
+        power-domains:
+          minItems: 2
+      required:
+        - power-domains
+        - power-domain-names
+        - required-opps
+    else:
+      properties:
+        power-domains:
+          maxItems: 1
+        power-domain-names: false
+        required-opps: false
+
   - if:
       properties:
         compatible:

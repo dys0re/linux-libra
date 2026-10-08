@@ -7,6 +7,7 @@
  */
 
 #include "adreno_gpu.h"
+#include <linux/pm_domain.h>
 
 bool hang_debug = false;
 MODULE_PARM_DESC(hang_debug, "Dump registers when hang is detected (can be slow!)");
@@ -257,8 +258,26 @@ static void adreno_device_register_headless(void)
 
 static int adreno_probe(struct platform_device *pdev)
 {
-
+	struct device *dev = &pdev->dev;
 	int ret;
+
+	if (of_device_is_compatible(dev->of_node, "qcom,adreno-418.0")) {
+		struct dev_pm_domain_list *domains;
+		int corner;
+
+		/* RPM controls PMI8994 S2/S3; GX has CX as its parent. */
+		ret = devm_pm_domain_attach_list(dev, NULL, &domains);
+		if (ret < 0)
+			return ret;
+		if (ret != 2)
+			return -EINVAL;
+		corner = of_get_required_opp_performance_state(dev->of_node, 0);
+		if (corner < 0)
+			return corner;
+		ret = dev_pm_genpd_set_performance_state(domains->pd_devs[0], corner);
+		if (ret)
+			return ret;
+	}
 
 	ret = component_add(&pdev->dev, &a3xx_ops);
 	if (ret)

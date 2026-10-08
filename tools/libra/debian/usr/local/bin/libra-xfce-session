@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+# Set loader paths after Xsession's agents have dropped privileged variables.
+. /etc/X11/Xsession.d/60libra-gpu
+exec /usr/bin/startxfce4

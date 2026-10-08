@@ -96,9 +96,9 @@ static int msm_drm_uninit(struct device *dev)
 	if (priv->kms)
 		msm_drm_kms_uninit(dev);
 
-	msm_deinit_vram(ddev);
-
 	component_unbind_all(dev, ddev);
+	/* DSI/GPU components still own allocations in the VRAM arena. */
+	msm_deinit_vram(ddev);
 
 	ddev->dev_private = NULL;
 	drm_dev_put(ddev);
@@ -1027,10 +1027,17 @@ static const struct of_device_id msm_gpu_match[] = {
 	{ },
 };
 
+static bool enable_gpu = true;
+module_param_named(gpu, enable_gpu, bool, 0600);
+MODULE_PARM_DESC(gpu, "Include GPU when registering the DRM component master");
+
 static int add_gpu_components(struct device *dev,
 			      struct component_match **matchptr)
 {
 	struct device_node *np;
+
+	if (!enable_gpu)
+		return 0;
 
 	np = of_find_matching_node(NULL, msm_gpu_match);
 	if (!np)

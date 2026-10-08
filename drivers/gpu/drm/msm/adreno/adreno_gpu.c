@@ -1060,7 +1060,7 @@ int adreno_gpu_ocmem_init(struct device *dev, struct adreno_gpu *adreno_gpu,
 
 void adreno_gpu_ocmem_cleanup(struct adreno_ocmem *adreno_ocmem)
 {
-	if (adreno_ocmem && adreno_ocmem->base)
+	if (adreno_ocmem && adreno_ocmem->hdl)
 		ocmem_free(adreno_ocmem->ocmem, OCMEM_GRAPHICS,
 			   adreno_ocmem->hdl);
 }

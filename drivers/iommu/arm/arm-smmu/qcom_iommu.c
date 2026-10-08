@@ -26,6 +26,8 @@
 #include <linux/platform_device.h>
 #include <linux/pm.h>
 #include <linux/pm_runtime.h>
+#include <linux/pm_domain.h>
+#include <linux/pm_opp.h>
 #include <linux/firmware/qcom/qcom_scm.h>
 #include <linux/slab.h>
 #include <linux/spinlock.h>
@@ -33,6 +35,11 @@
 #include "arm-smmu.h"
 
 #define SMMU_INTR_SEL_NS     0x2000
+#define MSM8992_ACTLR_BPRC (BIT(28) | BIT(29) | BIT(30))
+
+static bool msm8992_probe;
+module_param(msm8992_probe, bool, 0600);
+MODULE_PARM_DESC(msm8992_probe, "Allow manual MSM8992 GPU IOMMU activation");
 
 enum qcom_iommu_clk {
 	CLK_IFACE,
@@ -51,6 +58,7 @@ struct qcom_iommu_dev {
 	void __iomem		*local_base;
 	u32			 sec_id;
 	u8			 max_asid;
+	bool			 msm8992;
 	struct qcom_iommu_ctx	*ctxs[];   /* indexed by asid */
 };
 
@@ -61,7 +69,41 @@ struct qcom_iommu_ctx {
 	bool			 secured_ctx;
 	u8			 asid;      /* asid and ctx bank # are 1:1 */
 	struct iommu_domain	*domain;
+	/* MSM8992 loses context registers during GX power collapse. */
+	u64 ttbr0;
+	u32 tcr, tcr2, mair0, mair1, sctlr;
 };
+
+static u32 qcom_iommu_msm8992_tcr(const struct io_pgtable_cfg *cfg)
+{
+	/* QSMMUv1 uses the AArch32 TTBCR layout, without a TCR2 register. */
+	return ARM_SMMU_TCR_EAE | BIT(5) /* EPD1 */ |
+		FIELD_PREP(GENMASK(2, 0), 32 - cfg->ias) |
+		FIELD_PREP(GENMASK(9, 8), cfg->arm_lpae_s1_cfg.tcr.irgn) |
+		FIELD_PREP(GENMASK(11, 10), cfg->arm_lpae_s1_cfg.tcr.orgn) |
+		FIELD_PREP(GENMASK(13, 12), cfg->arm_lpae_s1_cfg.tcr.sh);
+}
+
+static void qcom_iommu_msm8992_bfb(struct qcom_iommu_dev *iommu)
+{
+	/* msm8992-iommu.dtsi: global routing and micro-TLB settings. */
+	static const struct { u16 reg; u32 value; } bfb[] = {
+		{ 0x2000, 3 }, { 0x204c, 3 }, { 0x2060, 0x1555 },
+		{ 0x2514, 0 }, { 0x2540, 0 }, { 0x256c, 0x10 },
+		{ 0x20ac, 0 }, { 0x215c, 0x120 }, { 0x220c, 0x120 },
+		{ 0x22bc, 0x10 }, { 0x2314, 0 }, { 0x2394, 0 },
+		{ 0x2414, 0 }, { 0x2494, 1 }, { 0x2008, 0 },
+		{ 0x2600, 7 }, { 0x2604, 0 }, { 0x2608, 0x20 },
+		{ 0x260c, 0x20 }, { 0x2610, 0xc }, { 0x2614, 0 },
+		{ 0x2618, 0 }, { 0x261c, 0 }, { 0x2620, 0x10 },
+		{ 0x2624, 0 }, { 0x2628, 0 }, { 0x262c, 0x10 },
+	};
+	unsigned int i;
+
+	for (i = 0; i < ARRAY_SIZE(bfb); i++)
+		writel_relaxed(bfb[i].value, iommu->local_base + bfb[i].reg);
+	wmb();
+}
 
 struct qcom_iommu_domain {
 	struct io_pgtable_ops	*pgtbl_ops;
@@ -109,6 +151,27 @@ static inline u64
 iommu_readq(struct qcom_iommu_ctx *ctx, unsigned reg)
 {
 	return readq_relaxed(ctx->base + reg);
+}
+
+static void qcom_iommu_program_context(struct qcom_iommu_ctx *ctx, bool msm8992)
+{
+	iommu_writel(ctx, ARM_SMMU_CB_SCTLR, 0);
+	if (msm8992)
+		iommu_writel(ctx, ARM_SMMU_CB_ACTLR, MSM8992_ACTLR_BPRC);
+	iommu_writel(ctx, ARM_SMMU_CB_FAR, 0);
+	iommu_writel(ctx, ARM_SMMU_CB_FSR, ARM_SMMU_CB_FSR_FAULT);
+
+	/* TCR selects the TTBR format. QSMMUv1 has no register at +0x10. */
+	if (!msm8992)
+		iommu_writel(ctx, ARM_SMMU_CB_TCR2, ctx->tcr2);
+	iommu_writel(ctx, ARM_SMMU_CB_TCR, ctx->tcr);
+	iommu_writeq(ctx, ARM_SMMU_CB_TTBR0, ctx->ttbr0);
+	iommu_writeq(ctx, ARM_SMMU_CB_TTBR1, 0);
+	iommu_writel(ctx, ARM_SMMU_CB_S1_MAIR0, ctx->mair0);
+	iommu_writel(ctx, ARM_SMMU_CB_S1_MAIR1, ctx->mair1);
+	wmb();
+	iommu_writel(ctx, ARM_SMMU_CB_SCTLR, ctx->sctlr);
+	wmb();
 }
 
 static void qcom_iommu_tlb_sync(void *cookie)
@@ -200,7 +263,7 @@ static irqreturn_t qcom_iommu_fault(int irq, void *dev)
 	fsynr = iommu_readl(ctx, ARM_SMMU_CB_FSYNR0);
 	iova = iommu_readq(ctx, ARM_SMMU_CB_FAR);
 
-	if (report_iommu_fault(ctx->domain, ctx->dev, iova, 0)) {
+	if (!ctx->domain || report_iommu_fault(ctx->domain, ctx->dev, iova, 0)) {
 		dev_err_ratelimited(ctx->dev,
 				    "Unhandled context fault: fsr=0x%x, "
 				    "iova=0x%016llx, fsynr=0x%x, cb=%d\n",
@@ -223,6 +286,10 @@ static int qcom_iommu_init_domain(struct iommu_domain *domain,
 	struct io_pgtable_cfg pgtbl_cfg;
 	int i, ret = 0;
 	u32 reg;
+
+	if (qcom_iommu->msm8992)
+		dev_info(qcom_iommu->dev, "MSM8992 GPU domain attach: %s, %u contexts\n",
+			dev_name(dev), fwspec->num_ids);
 
 	mutex_lock(&qcom_domain->init_mutex);
 	if (qcom_domain->iommu)
@@ -255,10 +322,13 @@ static int qcom_iommu_init_domain(struct iommu_domain *domain,
 		struct qcom_iommu_ctx *ctx = to_ctx(qcom_domain, fwspec->ids[i]);
 
 		if (!ctx->secure_init) {
-			ret = qcom_scm_restore_sec_cfg(qcom_iommu->sec_id, ctx->asid);
-			if (ret) {
-				dev_err(qcom_iommu->dev, "secure init failed: %d\n", ret);
-				goto out_clear_iommu;
+			/* MSM8992 runtime resume already restores the global config. */
+			if (!qcom_iommu->msm8992) {
+				ret = qcom_scm_restore_sec_cfg(qcom_iommu->sec_id, ctx->asid);
+				if (ret) {
+					dev_err(qcom_iommu->dev, "secure init failed: %d\n", ret);
+					goto out_clear_iommu;
+				}
 			}
 			ctx->secure_init = true;
 		}
@@ -269,30 +339,17 @@ static int qcom_iommu_init_domain(struct iommu_domain *domain,
 			continue;
 		}
 
-		/* Disable context bank before programming */
-		iommu_writel(ctx, ARM_SMMU_CB_SCTLR, 0);
-
-		/* Clear context bank fault address fault status registers */
-		iommu_writel(ctx, ARM_SMMU_CB_FAR, 0);
-		iommu_writel(ctx, ARM_SMMU_CB_FSR, ARM_SMMU_CB_FSR_FAULT);
-
-		/* TTBRs */
-		iommu_writeq(ctx, ARM_SMMU_CB_TTBR0,
-				pgtbl_cfg.arm_lpae_s1_cfg.ttbr |
-				FIELD_PREP(ARM_SMMU_TTBRn_ASID, ctx->asid));
-		iommu_writeq(ctx, ARM_SMMU_CB_TTBR1, 0);
-
-		/* TCR */
-		iommu_writel(ctx, ARM_SMMU_CB_TCR2,
-				arm_smmu_lpae_tcr2(&pgtbl_cfg));
-		iommu_writel(ctx, ARM_SMMU_CB_TCR,
-			     arm_smmu_lpae_tcr(&pgtbl_cfg) | ARM_SMMU_TCR_EAE);
-
-		/* MAIRs (stage-1 only) */
-		iommu_writel(ctx, ARM_SMMU_CB_S1_MAIR0,
-				pgtbl_cfg.arm_lpae_s1_cfg.mair);
-		iommu_writel(ctx, ARM_SMMU_CB_S1_MAIR1,
-				pgtbl_cfg.arm_lpae_s1_cfg.mair >> 32);
+		ctx->ttbr0 = pgtbl_cfg.arm_lpae_s1_cfg.ttbr |
+			FIELD_PREP(ARM_SMMU_TTBRn_ASID, ctx->asid);
+		if (qcom_iommu->msm8992) {
+			ctx->tcr = qcom_iommu_msm8992_tcr(&pgtbl_cfg);
+			ctx->tcr2 = 0;
+		} else {
+			ctx->tcr = arm_smmu_lpae_tcr(&pgtbl_cfg) | ARM_SMMU_TCR_EAE;
+			ctx->tcr2 = arm_smmu_lpae_tcr2(&pgtbl_cfg);
+		}
+		ctx->mair0 = pgtbl_cfg.arm_lpae_s1_cfg.mair;
+		ctx->mair1 = pgtbl_cfg.arm_lpae_s1_cfg.mair >> 32;
 
 		/* SCTLR */
 		reg = ARM_SMMU_SCTLR_CFIE | ARM_SMMU_SCTLR_CFRE |
@@ -303,9 +360,14 @@ static int qcom_iommu_init_domain(struct iommu_domain *domain,
 		if (IS_ENABLED(CONFIG_CPU_BIG_ENDIAN))
 			reg |= ARM_SMMU_SCTLR_E;
 
-		iommu_writel(ctx, ARM_SMMU_CB_SCTLR, reg);
-
+		ctx->sctlr = reg;
 		ctx->domain = domain;
+		/* Publish the handler's domain before enabling context fault IRQs. */
+		wmb();
+		qcom_iommu_program_context(ctx, qcom_iommu->msm8992);
+		if (qcom_iommu->msm8992)
+			dev_info(qcom_iommu->dev, "MSM8992 GPU context %u enabled: TTBR=%#llx TCR=%#x\n",
+				ctx->asid, ctx->ttbr0, ctx->tcr);
 	}
 
 	mutex_unlock(&qcom_domain->init_mutex);
@@ -372,7 +434,9 @@ static int qcom_iommu_attach_dev(struct iommu_domain *domain, struct device *dev
 	}
 
 	/* Ensure that the domain is finalized */
-	pm_runtime_get_sync(qcom_iommu->dev);
+	ret = pm_runtime_resume_and_get(qcom_iommu->dev);
+	if (ret < 0)
+		return ret;
 	ret = qcom_iommu_init_domain(domain, qcom_iommu, dev);
 	pm_runtime_put_sync(qcom_iommu->dev);
 	if (ret < 0)
@@ -412,6 +476,7 @@ static int qcom_iommu_identity_attach(struct iommu_domain *identity_domain,
 		iommu_writel(ctx, ARM_SMMU_CB_SCTLR, 0);
 
 		ctx->domain = NULL;
+		ctx->sctlr = 0;
 	}
 	pm_runtime_put_sync(qcom_iommu->dev);
 	return 0;
@@ -608,7 +673,7 @@ static const struct iommu_ops qcom_iommu_ops = {
 	}
 };
 
-static int qcom_iommu_sec_ptbl_init(struct device *dev)
+static int qcom_iommu_sec_ptbl_init(struct device *dev, bool msm8992)
 {
 	size_t psize = 0;
 	unsigned int spare = 0;
@@ -620,6 +685,12 @@ static int qcom_iommu_sec_ptbl_init(struct device *dev)
 
 	if (allocated)
 		return 0;
+	if (msm8992) {
+		/* OEM msm_iommu_sec.c reserves a 300MiB virtual CP window. */
+		ret = qcom_scm_iommu_set_cp_pool_size(0, 300 * SZ_1M);
+		if (ret)
+			return dev_err_probe(dev, ret, "MSM8992 IOMMU CP pool setup failed\n");
+	}
 
 	ret = qcom_scm_iommu_secure_ptbl_size(spare, &psize);
 	if (ret) {
@@ -783,6 +854,12 @@ static int qcom_iommu_device_probe(struct platform_device *pdev)
 	struct resource *res;
 	struct clk *clk;
 	int ret, max_asid = 0;
+	bool msm8992 = of_device_is_compatible(dev->of_node, "qcom,msm8992-iommu");
+
+	if (msm8992 && !msm8992_probe) {
+		dev_info(dev, "MSM8992 GPU IOMMU held for manual activation\n");
+		return -ENODEV;
+	}
 
 	/* find the max asid (which is 1:1 to ctx bank idx), so we know how
 	 * many child ctx devices we have:
@@ -796,6 +873,23 @@ static int qcom_iommu_device_probe(struct platform_device *pdev)
 		return -ENOMEM;
 	qcom_iommu->max_asid = max_asid;
 	qcom_iommu->dev = dev;
+	qcom_iommu->msm8992 = msm8992;
+	if (msm8992) {
+		struct dev_pm_domain_list *domains;
+		int corner;
+
+		ret = devm_pm_domain_attach_list(dev, NULL, &domains);
+		if (ret < 0)
+			return dev_err_probe(dev, ret, "MSM8992 GPU domain attachment failed\n");
+		if (ret != 2)
+			return dev_err_probe(dev, -EINVAL, "MSM8992 GPU needs two domains, got %d\n", ret);
+		corner = of_get_required_opp_performance_state(dev->of_node, 0);
+		if (corner < 0)
+			return dev_err_probe(dev, corner, "MSM8992 GPU initial RPM corner lookup failed\n");
+		ret = dev_pm_genpd_set_performance_state(domains->pd_devs[0], corner);
+		if (ret)
+			return dev_err_probe(dev, ret, "MSM8992 GPU RPM corner %d vote failed\n", corner);
+	}
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	if (res) {
@@ -817,6 +911,11 @@ static int qcom_iommu_device_probe(struct platform_device *pdev)
 		return PTR_ERR(clk);
 	}
 	qcom_iommu->clks[CLK_BUS].clk = clk;
+	if (msm8992) {
+		ret = clk_set_rate(clk, 180000000);
+		if (ret)
+			return dev_err_probe(dev, ret, "MSM8992 GPU bus clock 180MHz setup failed\n");
+	}
 
 	clk = devm_clk_get_optional(dev, "tbu");
 	if (IS_ERR(clk)) {
@@ -831,8 +930,9 @@ static int qcom_iommu_device_probe(struct platform_device *pdev)
 		return -ENODEV;
 	}
 
-	if (qcom_iommu_has_secure_context(qcom_iommu)) {
-		ret = qcom_iommu_sec_ptbl_init(dev);
+	if (msm8992 || qcom_iommu_has_secure_context(qcom_iommu)) {
+		/* Firmware needs the global table even for our nonsecure context. */
+		ret = qcom_iommu_sec_ptbl_init(dev, msm8992);
 		if (ret) {
 			dev_err(dev, "cannot init secure pg table(%d)\n", ret);
 			return ret;
@@ -841,7 +941,21 @@ static int qcom_iommu_device_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, qcom_iommu);
 
+	if (msm8992) {
+		/* Clear a previous probe's runtime error before a fresh attempt. */
+		ret = pm_runtime_set_suspended(dev);
+		if (ret)
+			return ret;
+	}
 	pm_runtime_enable(dev);
+	/* Context probe touches MMIO, so keep the new GPU domain powered. */
+	if (msm8992) {
+		ret = pm_runtime_resume_and_get(dev);
+		if (ret < 0) {
+			dev_err(dev, "MSM8992 GPU power/clock resume failed: %d\n", ret);
+			goto err_pm_disable;
+		}
+	}
 
 	/* register context bank devices, which are child nodes: */
 	ret = devm_of_platform_populate(dev);
@@ -863,7 +977,10 @@ static int qcom_iommu_device_probe(struct platform_device *pdev)
 		goto err_sysfs_remove;
 	}
 
-	if (qcom_iommu->local_base) {
+	if (msm8992) {
+		dev_info(dev, "MSM8992 GPU IOMMU ready: OEM context 0, secure ID 18\n");
+		pm_runtime_put_sync(dev);
+	} else if (qcom_iommu->local_base) {
 		pm_runtime_get_sync(dev);
 		writel_relaxed(0xffffffff, qcom_iommu->local_base + SMMU_INTR_SEL_NS);
 		pm_runtime_put_sync(dev);
@@ -874,6 +991,8 @@ static int qcom_iommu_device_probe(struct platform_device *pdev)
 err_sysfs_remove:
 	iommu_device_sysfs_remove(&qcom_iommu->iommu);
 err_pm_disable:
+	if (msm8992 && pm_runtime_active(dev))
+		pm_runtime_put_sync(dev);
 	pm_runtime_disable(dev);
 	return ret;
 }
@@ -896,6 +1015,21 @@ static int __maybe_unused qcom_iommu_resume(struct device *dev)
 	ret = clk_bulk_prepare_enable(CLK_NUM, qcom_iommu->clks);
 	if (ret < 0)
 		return ret;
+	if (qcom_iommu->msm8992) {
+		struct qcom_iommu_ctx *ctx = qcom_iommu->ctxs[0];
+
+		ret = qcom_scm_restore_sec_cfg(qcom_iommu->sec_id, 0);
+		if (ret) {
+			dev_err(dev, "MSM8992 GPU secure configuration ID %u failed: %d\n",
+				qcom_iommu->sec_id, ret);
+			clk_bulk_disable_unprepare(CLK_NUM, qcom_iommu->clks);
+			return ret;
+		}
+		qcom_iommu_msm8992_bfb(qcom_iommu);
+		if (ctx && ctx->domain && ctx->sctlr)
+			qcom_iommu_program_context(ctx, true);
+		return 0;
+	}
 
 	if (dev->pm_domain)
 		return qcom_scm_restore_sec_cfg(qcom_iommu->sec_id, 0);

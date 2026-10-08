@@ -1,0 +1,9 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+# A GPU test boot keeps the firmware console until MSM has been registered.
+if grep -qw 'libra.gpu_defer=1' /proc/cmdline; then
+ test -r /sys/class/graphics/fb0/name &&
+ test "$(cat /sys/class/graphics/fb0/name)" = msmdrmfb
+else
+ exit 0
+fi

@@ -283,7 +283,9 @@ static void libra_panel_remove(struct mipi_dsi_device *dsi)
 
 	drm_panel_disable(&ctx->panel);
 	drm_panel_unprepare(&ctx->panel);
-	mipi_dsi_detach(dsi);
+	/* Host teardown can detach the peripheral before driver removal. */
+	if (dsi->attached)
+		mipi_dsi_detach(dsi);
 	drm_panel_remove(&ctx->panel);
 }
 

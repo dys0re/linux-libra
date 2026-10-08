@@ -1,6 +1,10 @@
 #!/bin/sh
 set -eu
-export LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe QT_QUICK_BACKEND=software
+if [ -f /etc/libra/gpu-desktop ] && [ "$(cat /etc/libra/gpu-desktop)" = 1 ]; then
+ unset LIBGL_ALWAYS_SOFTWARE GALLIUM_DRIVER QT_QUICK_BACKEND
+else
+ export LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe QT_QUICK_BACKEND=software
+fi
 xset s off
 xset -dpms
 # Apply defaults once. Subsequent sessions preserve the user's changes.

@@ -15,6 +15,9 @@ cmdline="$cmdline log_buf_len=2M loglevel=4 clk_ignore_unused pd_ignore_unused l
 cmdline="$cmdline qcom_tsens.msm8992_probe=1 clk_cpu_msm8992.clusters_probe=1 qcom_msm8992_cpufreq.enable=1"
 # PCIe/firmware and Wi-Fi traffic verified on the phone; recovery boot stays archived.
 cmdline="$cmdline libra.radio=1"
+# Keep GPU power/IOMMU activation explicit during initial bring-up.
+cmdline="$cmdline msm.gpu=0 qcom_iommu.msm8992_probe=0"
+cmdline="$cmdline libra.gpu_defer=1"
 python3 "$workspace/scripts/pack-factory-boot.py" \
  --factory "$workspace/libra_images_6.1.7_20151221.0000.11_5.1_cn/images/boot.img" \
  --kernel "$build/libra/arch/arm64/boot/Image" \
